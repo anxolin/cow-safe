@@ -1,0 +1,8 @@
+{
+  "name": "cow-safe",
+  "version": "1.0.0",
+  "main": "index.js",
+  "repository": "git@github.com:anxolin/cow-safe.git",
+  "author": "Anxo Rodriguez <anxolin@gmail.com>",
+  "license": "MIT"
+}
