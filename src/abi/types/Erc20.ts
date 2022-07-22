@@ -25,16 +25,24 @@ import type {
 
 export interface Erc20Interface extends utils.Interface {
   functions: {
+    "allowance(address,address)": FunctionFragment;
     "approve(address,uint256)": FunctionFragment;
   };
 
-  getFunction(nameOrSignatureOrTopic: "approve"): FunctionFragment;
+  getFunction(
+    nameOrSignatureOrTopic: "allowance" | "approve"
+  ): FunctionFragment;
 
+  encodeFunctionData(
+    functionFragment: "allowance",
+    values: [PromiseOrValue<string>, PromiseOrValue<string>]
+  ): string;
   encodeFunctionData(
     functionFragment: "approve",
     values: [PromiseOrValue<string>, PromiseOrValue<BigNumberish>]
   ): string;
 
+  decodeFunctionResult(functionFragment: "allowance", data: BytesLike): Result;
   decodeFunctionResult(functionFragment: "approve", data: BytesLike): Result;
 
   events: {};
@@ -67,12 +75,24 @@ export interface Erc20 extends BaseContract {
   removeListener: OnEvent<this>;
 
   functions: {
+    allowance(
+      owner: PromiseOrValue<string>,
+      spender: PromiseOrValue<string>,
+      overrides?: CallOverrides
+    ): Promise<[BigNumber]>;
+
     approve(
       _spender: PromiseOrValue<string>,
       _value: PromiseOrValue<BigNumberish>,
       overrides?: Overrides & { from?: PromiseOrValue<string> }
     ): Promise<ContractTransaction>;
   };
+
+  allowance(
+    owner: PromiseOrValue<string>,
+    spender: PromiseOrValue<string>,
+    overrides?: CallOverrides
+  ): Promise<BigNumber>;
 
   approve(
     _spender: PromiseOrValue<string>,
@@ -81,6 +101,12 @@ export interface Erc20 extends BaseContract {
   ): Promise<ContractTransaction>;
 
   callStatic: {
+    allowance(
+      owner: PromiseOrValue<string>,
+      spender: PromiseOrValue<string>,
+      overrides?: CallOverrides
+    ): Promise<BigNumber>;
+
     approve(
       _spender: PromiseOrValue<string>,
       _value: PromiseOrValue<BigNumberish>,
@@ -91,6 +117,12 @@ export interface Erc20 extends BaseContract {
   filters: {};
 
   estimateGas: {
+    allowance(
+      owner: PromiseOrValue<string>,
+      spender: PromiseOrValue<string>,
+      overrides?: CallOverrides
+    ): Promise<BigNumber>;
+
     approve(
       _spender: PromiseOrValue<string>,
       _value: PromiseOrValue<BigNumberish>,
@@ -99,6 +131,12 @@ export interface Erc20 extends BaseContract {
   };
 
   populateTransaction: {
+    allowance(
+      owner: PromiseOrValue<string>,
+      spender: PromiseOrValue<string>,
+      overrides?: CallOverrides
+    ): Promise<PopulatedTransaction>;
+
     approve(
       _spender: PromiseOrValue<string>,
       _value: PromiseOrValue<BigNumberish>,

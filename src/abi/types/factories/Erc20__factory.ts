@@ -8,6 +8,29 @@ import type { Erc20, Erc20Interface } from "../Erc20";
 
 const _abi = [
   {
+    constant: true,
+    inputs: [
+      {
+        name: "owner",
+        type: "address",
+      },
+      {
+        name: "spender",
+        type: "address",
+      },
+    ],
+    name: "allowance",
+    outputs: [
+      {
+        name: "",
+        type: "uint256",
+      },
+    ],
+    payable: false,
+    stateMutability: "view",
+    type: "function",
+  },
+  {
     constant: false,
     inputs: [
       {
