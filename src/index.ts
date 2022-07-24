@@ -104,8 +104,8 @@ function getChainIdFromEnv(): ChainId {
 }
 
 
-async function getOrder(): Promise<OrderParams> {
-  const content = await fs.readFile('./examples/eoa-rinkeby-market-order.json')
+async function getOrder(orderFilePath: string): Promise<OrderParams> {
+  const content = await fs.readFile(orderFilePath)
   return JSON.parse(content.toString()) as OrderParams
 }
 
@@ -140,8 +140,15 @@ function getCowExplorerUrl(chainId: ChainId) {
 }
 
 async function run() {
+  const myArgs = process.argv.slice(2)
+  if (myArgs.length === 0) {
+    console.error(`${chalk.cyan('Missing argument. Path to the order definition JSON file')}. i.e. yarn sell examples/eoa-rinkeby-market-order.json`)
+    exit(99)
+  }
+  const orderFilePath = myArgs[0]
+
   // Get order definition
-  const { chainId = getChainIdFromEnv(), account, order } = await getOrder()
+  const { chainId = getChainIdFromEnv(), account, order } = await getOrder(orderFilePath)
 
   // Get Provider/Signer
   const provider = getProvider(chainId)
