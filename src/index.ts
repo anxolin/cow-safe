@@ -1,6 +1,7 @@
 import 'dotenv/config'
 
 import * as readline from 'readline'
+import * as fs from 'fs/promises'
 import { TransactionRequest, TransactionResponse } from "@ethersproject/abstract-provider";
 import { Wallet, BigNumber, ethers } from "ethers";
 const chalk = require('chalk')
@@ -103,21 +104,9 @@ function getChainIdFromEnv(): ChainId {
 }
 
 
-function getOrder(): OrderParams {
-  // TODO: For now mocked, it would load this info from a file in future PRs
-  return {
-    chainId: 4, // Rinkeby
-    account: {
-      accountType: 'EOA'
-    },
-    order: {
-      sellToken: '0xc778417E063141139Fce010982780140Aa0cD5Ab', // WETH
-      buyToken: '0x4DBCdF9B62e891a7cec5A2568C3F4FAF9E8Abe2b', // USDC
-      sellAmount: '100000000000000000', // 0.1 WETH
-      partiallyFillable: false,
-      // buyAmount, // Empty to get the price. TODO: add buyAmount support, or add slippage
-    }
-  }
+async function getOrder(): Promise<OrderParams> {
+  const content = await fs.readFile('./examples/eoa-rinkeby-market-order.json')
+  return JSON.parse(content.toString()) as OrderParams
 }
 
 function getExplorerUrl(chainId: ChainId) {
@@ -152,7 +141,7 @@ function getCowExplorerUrl(chainId: ChainId) {
 
 async function run() {
   // Get order definition
-  const { chainId = getChainIdFromEnv(), account, order } = getOrder()
+  const { chainId = getChainIdFromEnv(), account, order } = await getOrder()
 
   // Get Provider/Signer
   const provider = getProvider(chainId)
