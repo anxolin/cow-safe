@@ -205,6 +205,12 @@ async function run() {
   const vaultAddress = vaultAddresses[chainId].address
   const sellToken = Erc20__factory.connect(sellTokenAddress, signerOrProvider)
   
+  // Validate if enough balance
+  const sellBalance = await sellToken.balanceOf(fromAccount)
+  if (sellBalance.lt(sellAmount)) {
+    throw new Error(`User doesn't have enough balance of the sell token. Required ${sellAmount}, balance ${sellBalance}`)
+  }
+  
   // Check allowance (decide if approve sellToken is required)
   const allowance = await sellToken.allowance(fromAccount, vaultAddress)
   if (allowance.lt(sellAmount)) {
