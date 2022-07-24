@@ -15,12 +15,14 @@ import { GPv2Settlement as settlementAddresses, GPv2VaultRelayer as vaultAddress
 import { Settlement__factory, Erc20__factory } from './abi/types';
 import { exit } from 'process';
 
-const MAX_U32 = BigNumber.from("0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff")
 const SUPPORTED_CHAIN_IDS = [1, 4, 5, 100]
 type ChainId = 1 | 4 | 5 | 100
+const MAX_U32 = BigNumber.from("0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff")
+const TEN_THOUSAND = BigNumber.from('10000')
 
 const APP_DATA = process.env.APP_DATA || '0x0000000000000000000000000000000000000000000000000000000000000000'
 const DEADLINE_OFFSET = 30 * 60 * 1000 // 30min
+const DEFAULT_SLIPPAGE_BIPS = 100
 
 const NUMBER_CONFIRMATIONS_WAIT = 1
 
@@ -39,6 +41,7 @@ interface LimitOrderParams {
   partiallyFillable?: boolean
   appData?: string
   receiver?: string
+  slippageToleranceBips?: string
 }
 
 interface OrderParams {
@@ -166,6 +169,7 @@ async function run() {
     sellAmountBeforeFee,
     receiver: receiverParam,
     partiallyFillable = false,
+    slippageToleranceBips: slippageToleranceBips = DEFAULT_SLIPPAGE_BIPS,
     appData = process.env.APP_DATA || APP_DATA
   } = order
   
@@ -211,6 +215,14 @@ async function run() {
   const quoteResponse = await cowSdk.cowApi.getQuote(quoteOrder) // TODO: Fix any here. The SDK requires "amount" which is not required
   const { sellAmount, buyAmount, feeAmount } = quoteResponse.quote
   console.log(`${chalk.cyan('Quote response')}: Receive at least ${chalk.blue(buyAmount)} buy tokens. Fee = ${chalk.blue(feeAmount)}\n${JSON.stringify(quoteResponse, null, 2)} sell tokens.`)
+
+  // Reduce the buyAmount by some slippageToleranceBips
+  
+  const buyAmountAfterSlippage = BigNumber
+    .from(buyAmount)
+    .mul(TEN_THOUSAND.sub(BigNumber.from(slippageToleranceBips)))
+    .div(TEN_THOUSAND)
+  console.log(`${chalk.cyan(`Apply ${chalk.blue(slippageToleranceBips + ' BIPs')} to expected receive tokens`)}. Accepting ${chalk.blue(buyAmountAfterSlippage)}, expected ${chalk.blue(buyAmount)}`)
   
   // Prepare the RAW order
   const rawOrder = {
@@ -219,7 +231,7 @@ async function run() {
 
     // Limit Price
     sellAmount, // sellAmount already has the fees deducted
-    buyAmount,
+    buyAmount: buyAmountAfterSlippage.toString(),
     sellAmountBeforeFee: undefined,
 
     // Fee
