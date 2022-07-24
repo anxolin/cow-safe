@@ -1,6 +1,7 @@
 import 'dotenv/config'
 
-import { Wallet, BigNumber } from "ethers";
+import { Wallet, BigNumber, ethers } from "ethers";
+
 import { strict as assert } from 'node:assert';
 
 import { CowSdk, OrderKind } from '@cowprotocol/cow-sdk'
@@ -10,36 +11,117 @@ import { GPv2Settlement as settlementAddresses, GPv2VaultRelayer as vaultAddress
 import { Settlement__factory, Erc20__factory } from './abi/types';
 
 const MAX_U32 = BigNumber.from("0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff")
-const MNEMONIC = process.env.MNEMONIC
-const NETWORK = process.env.NETWORK
+const SUPPORTED_CHAIN_IDS = [1, 4, 5, 100]
+type ChainId = 1 | 4 | 5 | 100
 
 const APP_DATA = process.env.APP_DATA || '0x0000000000000000000000000000000000000000000000000000000000000000'
 const DEADLINE_OFFSET = 30 * 60 * 1000 // 30min
 
+type AccoutType = 'EOA' | 'SAFE' | 'SAFE_WITH_EOA_PROPOSER'
+
+interface AccountParams {
+  accountType: AccoutType
+  safeAddress?: string // TODO: not used yet. It will allow to specify the Gnosis Safe address for SAFE_WITH_EOA_PROPOSER setup
+}
+
+interface LimitOrderParams {
+  sellToken: string
+  buyToken: string
+  sellAmount: string
+  buyAmount?: string
+  partiallyFillable?: boolean
+}
+
+interface OrderParams {
+  chainId?: ChainId
+  account: AccountParams
+  order: LimitOrderParams  
+}
+
+
+function getProvider(chainId: ChainId): ethers.providers.Provider {
+    const infuraKey = process.env.INFURA_KEY
+    const rpcUrl = process.env.RPC_URL
+    if (infuraKey) {
+      return new ethers.providers.InfuraProvider(chainId, infuraKey)
+    } else if (rpcUrl) {
+      return new ethers.providers.InfuraProvider(chainId, infuraKey)
+    } else {
+      throw new Error('Either INFURA_KEY or RPC_URL environment var is required')
+    }
+    
+    assert(rpcUrl, )
+}
+
+function getSigner(accoutType: AccoutType, provider: ethers.providers.Provider): Wallet | undefined {
+  switch (accoutType) {
+    case 'EOA':
+    case 'SAFE_WITH_EOA_PROPOSER':
+      const mnemonic = process.env.MNEMONIC
+      assert(mnemonic, 'MNEMONIC environment var is required for accountTypes EOA or SAFE_WITH_EOA_PROPOSER')
+      const wallet = Wallet.fromMnemonic(mnemonic)
+      wallet.connect(provider)
+
+      return wallet
+    case 'SAFE':
+      return undefined
+    default:
+      break;
+  }
+}
+
+function getChainIdFromEnv(): ChainId {
+  const chainIdEnv = process.env.CHAIN_ID
+  assert(chainIdEnv, 'CHAIN_ID environmentis required')
+  const chainId = parseInt(chainIdEnv)
+  assert(chainIdEnv && SUPPORTED_CHAIN_IDS.includes(chainId) , 'CHAIN_ID must be one supported chainId. Supported: ' + SUPPORTED_CHAIN_IDS.join(', '))
+
+  return chainId as ChainId
+}
+
+
+function getOrder(): OrderParams {
+  // TODO: For now mocked, it would load this info from a file in future PRs
+  return {
+    chainId: 4, // Rinkeby
+    account: {
+      accountType: 'EOA'
+    },
+    order: {
+      sellToken: '0xc778417E063141139Fce010982780140Aa0cD5Ab', // WETH
+      buyToken: '0x4DBCdF9B62e891a7cec5A2568C3F4FAF9E8Abe2b', // USDC
+      sellAmount: '100000000000000000', // 0.1 WETH
+      partiallyFillable: true,
+      // buyAmount, // Empty to get the price. TODO: add buyAmount support, or add slippage
+    }
+  }
+}
+
 async function run() {
-  assert(MNEMONIC, 'MNEMONIC environment var is required')
-  assert(NETWORK && NETWORK === '1' || NETWORK === '4' || NETWORK === '5' || NETWORK === '100', 'NETWORK environment must be a valid chain id')
+  // Get order definition
+  const { chainId = getChainIdFromEnv(), account, order } = getOrder()
 
-  const wallet = Wallet.fromMnemonic(MNEMONIC)
-  const cowSdk = new CowSdk(parseInt(NETWORK), { signer: wallet })
+  // Get Provider/Signer
+  const provider = getProvider(chainId)
+  const signer = getSigner(account.accountType, provider)
+  const signerOrProvider = signer || provider
+
+  // Instantiate SDK
+  const cowSdk = new CowSdk(chainId, { signer })
   console.log('CoW SDK context', cowSdk.context)
-  // const mockQuoteResult = {"quote":{"sellToken":"0xc778417e063141139fce010982780140aa0cd5ab","buyToken":"0x4dbcdf9b62e891a7cec5a2568c3f4faf9e8abe2b","receiver":"0xbbd50f14aa90d2d21329367cfd6710c92b9d1fda","sellAmount":"999724034906366998","buyAmount":"164577689090780","validTo":1658161259,"appData":"0x0000000000000000000000000000000000000000000000000000000000000000","feeAmount":"275965093633002","kind":"sell","partiallyFillable":false,"sellTokenBalance":"erc20","buyTokenBalance":"erc20"},"from":"0xbbd50f14aa90d2d21329367cfd6710c92b9d1fda","expiration":"2022-07-18T16:04:06.000748427Z","id":26755}
+  const signerAddress = signer?.address
 
-  const account =  wallet.address
 
-  // TODO: Read order from JSON. For now hardcoded to sell 0.1 WETH for USDC
-  const sellTokenAddress = '0xc778417E063141139Fce010982780140Aa0cD5Ab' // WETH
-  const buyTokenAddress = '0x4DBCdF9B62e891a7cec5A2568C3F4FAF9E8Abe2b' // USDC
-  const sellAmount = '100000000000000000'
-
-  console.log(`CoW SDK initialized. Account: ${account}: ${NETWORK}`)
+  console.log(`CoW SDK initialized. Account: ${signerAddress ? signerAddress : 'Undefined'}, Network: ${chainId}`)
   console.log('Config', {
     appData: APP_DATA
   })
 
+  
+  const { sellToken: sellTokenAddress, buyToken: buyTokenAddress, sellAmount, partiallyFillable = false } = order
   const quoteOrder = {
     // Type of order
-    partiallyFillable: false,
+    partiallyFillable,
     kind: OrderKind.SELL,
     sellTokenBalance: OrderBalance.ERC20,
     buyTokenBalance: OrderBalance.ERC20,
@@ -51,8 +133,8 @@ async function run() {
     sellAmountBeforeFee: sellAmount, // 1 WETH
 
     // Trader
-    from: account,
-    receiver: account,
+    from: signerAddress,
+    receiver: signerAddress,
 
     // Deadline
     validTo: Math.ceil((Date.now() + DEADLINE_OFFSET) / 1000),
@@ -81,6 +163,9 @@ async function run() {
 //     priceQuality: "optimal"
 //   }
 
+    // const mockQuoteResult = {"quote":{"sellToken":"0xc778417e063141139fce010982780140aa0cd5ab","buyToken":"0x4dbcdf9b62e891a7cec5a2568c3f4faf9e8abe2b","receiver":"0xbbd50f14aa90d2d21329367cfd6710c92b9d1fda","sellAmount":"999724034906366998","buyAmount":"164577689090780","validTo":1658161259,"appData":"0x0000000000000000000000000000000000000000000000000000000000000000","feeAmount":"275965093633002","kind":"sell","partiallyFillable":false,"sellTokenBalance":"erc20","buyTokenBalance":"erc20"},"from":"0xbbd50f14aa90d2d21329367cfd6710c92b9d1fda","expiration":"2022-07-18T16:04:06.000748427Z","id":26755}
+
+
 //   // Sign the order
 //   const { signature, signingScheme } = await cowSdk.signOrder(rawOrder)
 //   assert(signature, 'signOrder must return the signature')
@@ -98,12 +183,12 @@ async function run() {
 //     owner: account
 //   })
 
-  const orderId = '0x0d6f18a97690de9d70cdfe00231ee6baf722a12669f3260fb1faf3d2e25dca38' // mock
+  const orderId = '0xb9168d8014ab422f8b6e5d69dd618292a0b4c09b2d235a64a64a99e5817b02ba84e5c8518c248de590d5302fd7c32d2ae6b0123c627272e8' // mock
 
 
   // Show link to explorer
-  console.log(`🚀 The order has been submitted. See https://explorer.cow.fi/tx/${orderId}
-See full history in https://explorer.cow.fi/address/${account}`)
+  console.log(`🚀 The order has been submitted. See https://explorer.cow.fi/orders/${orderId}
+See full history in https://explorer.cow.fi/address/${signerAddress}`)
 
   const dataBundle: string[] = []
 
@@ -111,8 +196,8 @@ See full history in https://explorer.cow.fi/address/${account}`)
 
   // TODO: Decide if we need to include do approval
   // Get approval data
-  const vaultAddress = vaultAddresses[NETWORK].address
-  const sellToken = Erc20__factory.connect(sellTokenAddress, wallet)
+  const vaultAddress = vaultAddresses[chainId].address
+  const sellToken = Erc20__factory.connect(sellTokenAddress, signerOrProvider)
   
   // Check allowance (decide if approve sellToken is required)
   const allowance = BigNumber.from('200000000000000000')
@@ -126,9 +211,9 @@ See full history in https://explorer.cow.fi/address/${account}`)
 
 
   // GEt Pre-sign order data
-  const settlementAddress = settlementAddresses[NETWORK].address
+  const settlementAddress = settlementAddresses[chainId].address
   console.log('GPv2Settlement', settlementAddress)
-  const settlement = Settlement__factory.connect(settlementAddress, wallet)
+  const settlement = Settlement__factory.connect(settlementAddress, signerOrProvider)
   const preSignData = settlement.interface.encodeFunctionData('setPreSignature', [orderId, true])
   console.log('preSignData: ', preSignData)
   dataBundle.push(preSignData)
