@@ -6,7 +6,7 @@
   "author": "Anxo Rodriguez <anxolin@gmail.com>",
   "license": "MIT",
   "dependencies": {
-    "@cowprotocol/cow-sdk": "^0.0.15",
+    "@cowprotocol/cow-sdk": "file:.yalc/@cowprotocol/cow-sdk",
     "chalk": "4.1.2",
     "dotenv": "^16.0.1",
     "ethers": "^5.6.9"

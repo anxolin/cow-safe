@@ -9,7 +9,7 @@ const chalk = require('chalk')
 import { strict as assert } from 'node:assert';
 
 import { CowSdk, OrderKind } from '@cowprotocol/cow-sdk'
-import { OrderBalance, SigningScheme } from '@cowprotocol/contracts';
+import { OrderBalance, SigningScheme, QuoteQuery } from '@cowprotocol/contracts';
 import { GPv2Settlement as settlementAddresses, GPv2VaultRelayer as vaultAddresses } from '@cowprotocol/contracts/networks.json'
 
 import { Settlement__factory, Erc20__factory } from './abi/types';
@@ -34,7 +34,7 @@ interface AccountParams {
 interface LimitOrderParams {
   sellToken: string
   buyToken: string
-  sellAmount: string
+  sellAmountBeforeFee: string
   buyAmount?: string
   partiallyFillable?: boolean
   appData?: string
@@ -55,7 +55,7 @@ interface OnchainOperation {
 const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
 const ask = (query: string) => new Promise((resolve) => rl.question(query, resolve));
 const confirm = async (query: string): Promise<boolean> => {
-  const response = await ask(query)
+  const response = await ask(`${query} ${chalk.italic('(y/n)')}: `)
   if (response === 'y' || response === 'Y') return true
   else if (response === 'n' || response === 'N') return false
   else {
@@ -163,7 +163,7 @@ async function run() {
   const {
     sellToken: sellTokenAddress,
     buyToken: buyTokenAddress,
-    sellAmount,
+    sellAmountBeforeFee,
     receiver: receiverParam,
     partiallyFillable = false,
     appData = process.env.APP_DATA || APP_DATA
@@ -171,7 +171,7 @@ async function run() {
   
 
   // Decide what it sthe fromAccount and receiver
-  let fromAccount, receiver
+  let fromAccount: string, receiver: string
   if (account.accountType === 'EOA') {
     assert(signingAccount, `The signer address is missing`)
     fromAccount = signingAccount
@@ -183,7 +183,7 @@ async function run() {
   }
 
   // Prepare quote order
-  const quoteOrder = {
+  const quoteOrder: QuoteQuery = {
     // Type of order
     partiallyFillable,
     kind: OrderKind.SELL,
@@ -193,8 +193,7 @@ async function run() {
     // Limit order
     sellToken: sellTokenAddress,
     buyToken: buyTokenAddress,
-    amount: sellAmount, // 1 WETH // TODO: Why this is required??
-    sellAmountBeforeFee: sellAmount, // 1 WETH
+    sellAmountBeforeFee,
 
     // Trader
     from: fromAccount,
@@ -209,23 +208,26 @@ async function run() {
 
   // Get quote
   console.log(`${chalk.cyan('Get quote for order')}:\n${JSON.stringify(quoteOrder, null, 2)}`)
-  const quoteResponse = await cowSdk.cowApi.getQuote(quoteOrder)
-  const { buyAmount, feeAmount } = quoteResponse.quote
+  const quoteResponse = await cowSdk.cowApi.getQuote(quoteOrder) // TODO: Fix any here. The SDK requires "amount" which is not required
+  const { sellAmount, buyAmount, feeAmount } = quoteResponse.quote
   console.log(`${chalk.cyan('Quote response')}: Receive at least ${chalk.blue(buyAmount)} buy tokens. Fee = ${chalk.blue(feeAmount)}\n${JSON.stringify(quoteResponse, null, 2)} sell tokens.`)
   
   // Prepare the RAW order
   const rawOrder = {
     ...quoteOrder,
+    receiver,
 
     // Limit Price
-    //    TODO: apply some slippage
-    sellAmount,
-    buyAmount, 
+    sellAmount, // sellAmount already has the fees deducted
+    buyAmount,
+    sellAmountBeforeFee: undefined,
 
     // Fee
     feeAmount,    
     priceQuality: "optimal"
   }
+  delete rawOrder.sellAmountBeforeFee
+
   console.log(`${chalk.cyan('Raw order')}: \n${JSON.stringify(rawOrder, null, 2)}`)
 
   let orderId
@@ -236,8 +238,8 @@ async function run() {
   
   // Validate if enough balance
   const sellBalance = await sellToken.balanceOf(fromAccount)
-  if (sellBalance.lt(sellAmount)) {
-    throw new Error(`User doesn't have enough balance of the sell token. Required ${sellAmount}, balance ${sellBalance}`)
+  if (sellBalance.lt(sellAmountBeforeFee)) {
+    throw new Error(`User doesn't have enough balance of the sell token. Required ${sellAmountBeforeFee}, balance ${sellBalance}`)
   }
   
   // Check allowance (decide if approve sellToken is required)
@@ -278,48 +280,56 @@ async function run() {
 
   if (account.accountType === 'EOA') {
     assert(signer)
-    const txTotal = dataBundle.length
-    console.log(`\n\n${chalk.cyan(`${chalk.red(txTotal)} transactions need to be executed`)} before the order can be posted:\n`)
-    let txNumber = 1
-    for (const { txRequest, description } of dataBundle) {
-      const { to, data } = txRequest
-      console.log(`    [${txNumber}/${txTotal}] ${chalk.cyan('Are you sure you want to')} ${chalk.blue(description)}?}`)
-      console.log(`          ${chalk.bold('To')}: ${to}`)
-      console.log(`          ${chalk.bold('Tx Data')}: ${data}`)
-      txNumber++
-      const sendTransaction = await confirm(`    Approve transaction? ${chalk.italic('(y/n)')}: `)
-      if (sendTransaction) {        
-        const txResponse = await signer.sendTransaction({
-          from: signingAccount,
-          to,
-          data
-        })
-        // console.log(JSON.stringify(txResponse, null, 2))
-        console.log(`    Sent transaction for ${chalk.blue(description)}. Review in block explorer: ${chalk.blue(getExplorerUrl(chainId) + '/' + txResponse.hash)}`)
-        await txResponse.wait()
-        console.log(`    🎉 ${chalk.cyan('Transactions was mined!')} waiting for ${chalk.red(NUMBER_CONFIRMATIONS_WAIT)} confirmations before continuing`)
-        await txResponse.wait(NUMBER_CONFIRMATIONS_WAIT)
-      } else {
-        console.log(chalk.cyan('\nUnderstood! Not sending the transaction. Have a nice day 👋'))
-        exit(100)
+    const txTotal = dataBundle.length    
+    if (txTotal > 0) {
+      console.log(`\n\n${chalk.cyan(`${chalk.red(txTotal)} transactions need to be executed`)} before the order can be posted:\n`)
+      let txNumber = 1
+      for (const { txRequest, description } of dataBundle) {
+        const { to, data } = txRequest
+        console.log(`    [${txNumber}/${txTotal}] ${chalk.cyan('Are you sure you want to')} ${chalk.blue(description)}?}`)
+        console.log(`          ${chalk.bold('To')}: ${to}`)
+        console.log(`          ${chalk.bold('Tx Data')}: ${data}`)
+        txNumber++
+        const sendTransaction = await confirm(`    Approve transaction?`)
+        if (sendTransaction) {        
+          const txResponse = await signer.sendTransaction({
+            from: signingAccount,
+            to,
+            data
+          })
+          // console.log(JSON.stringify(txResponse, null, 2))
+          console.log(`    Sent transaction for ${chalk.blue(description)}. Review in block explorer: ${chalk.blue(getExplorerUrl(chainId) + '/' + txResponse.hash)}`)
+          await txResponse.wait()
+          console.log(`    🎉 ${chalk.cyan('Transactions was mined!')} waiting for ${chalk.red(NUMBER_CONFIRMATIONS_WAIT)} confirmations before continuing`)
+          await txResponse.wait(NUMBER_CONFIRMATIONS_WAIT)
+        } else {
+          console.log(chalk.cyan('\nUnderstood! Not sending the transaction. Have a nice day 👋'))
+          exit(100)
+        }
       }
     }
 
-    // Sign the order
-    const { signature, signingScheme } = await cowSdk.signOrder(rawOrder)
-    assert(signature, 'signOrder must return the signature')
+    const postOrder = await confirm(`${chalk.cyan('Are you sure you want to post this order?')}`)
+    if (postOrder) {
+      // Sign the order
+      const { signature, signingScheme } = await cowSdk.signOrder(rawOrder)
+      assert(signature, 'signOrder must return the signature')
 
-    console.log(`${chalk.cyan('Signed off-chain order using EIP-712')}. Signature: ${chalk.blue(signature)}, Signing Scheme: ${chalk.blue(signingScheme)}`)
+      console.log(`${chalk.cyan('Signed off-chain order using EIP-712')}. Signature: ${chalk.blue(signature)}, Signing Scheme: ${chalk.blue(signingScheme)}`)
 
-    // Post order
-    orderId = await cowSdk.cowApi.sendOrder({
-      order: {
-        ...rawOrder,
-        signature,
-        signingScheme
-      },
-      owner: signingAccount as string
-    })
+      // Post order
+      orderId = await cowSdk.cowApi.sendOrder({
+        order: {
+          ...rawOrder,
+          signature,
+          signingScheme
+        },
+        owner: signingAccount as string
+      })
+    } else {
+      console.log(chalk.cyan('\nUnderstood! Not sending the order. Have a nice day 👋'))
+      exit(100)
+    }    
   } else {
     // // Pre-sign data
     // if (dataBundle.length > 1) {

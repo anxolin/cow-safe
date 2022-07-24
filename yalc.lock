@@ -1,0 +1,10 @@
+{
+  "version": "v1",
+  "packages": {
+    "@cowprotocol/cow-sdk": {
+      "signature": "b81bf3d28662045bbf74ff4812138858",
+      "file": true,
+      "replaced": "^0.0.15"
+    }
+  }
+}
