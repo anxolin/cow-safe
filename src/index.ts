@@ -5,7 +5,7 @@ import { Wallet, BigNumber, ethers } from "ethers";
 import { strict as assert } from 'node:assert';
 
 import { CowSdk, OrderKind } from '@cowprotocol/cow-sdk'
-import { OrderBalance } from '@cowprotocol/contracts';
+import { OrderBalance, SigningScheme } from '@cowprotocol/contracts';
 import { GPv2Settlement as settlementAddresses, GPv2VaultRelayer as vaultAddresses } from '@cowprotocol/contracts/networks.json'
 
 import { Settlement__factory, Erc20__factory } from './abi/types';
@@ -30,6 +30,8 @@ interface LimitOrderParams {
   sellAmount: string
   buyAmount?: string
   partiallyFillable?: boolean
+  appData?: string
+  receiver?: string
 }
 
 interface OrderParams {
@@ -38,6 +40,10 @@ interface OrderParams {
   order: LimitOrderParams  
 }
 
+interface OnchainOperation {
+  description: string
+  data: string
+}
 
 function getProvider(chainId: ChainId): ethers.providers.Provider {
     const infuraKey = process.env.INFURA_KEY
@@ -60,9 +66,8 @@ function getSigner(accoutType: AccoutType, provider: ethers.providers.Provider):
       const mnemonic = process.env.MNEMONIC
       assert(mnemonic, 'MNEMONIC environment var is required for accountTypes EOA or SAFE_WITH_EOA_PROPOSER')
       const wallet = Wallet.fromMnemonic(mnemonic)
-      wallet.connect(provider)
 
-      return wallet
+      return wallet.connect(provider)
     case 'SAFE':
       return undefined
     default:
@@ -91,7 +96,7 @@ function getOrder(): OrderParams {
       sellToken: '0xc778417E063141139Fce010982780140Aa0cD5Ab', // WETH
       buyToken: '0x4DBCdF9B62e891a7cec5A2568C3F4FAF9E8Abe2b', // USDC
       sellAmount: '100000000000000000', // 0.1 WETH
-      partiallyFillable: true,
+      partiallyFillable: false,
       // buyAmount, // Empty to get the price. TODO: add buyAmount support, or add slippage
     }
   }
@@ -104,21 +109,36 @@ async function run() {
   // Get Provider/Signer
   const provider = getProvider(chainId)
   const signer = getSigner(account.accountType, provider)
+  const signingAccount = signer?.address
   const signerOrProvider = signer || provider
 
   // Instantiate SDK
   const cowSdk = new CowSdk(chainId, { signer })
-  console.log('CoW SDK context', cowSdk.context)
-  const signerAddress = signer?.address
+  console.log(`CoW SDK initialized. Signing Account: ${signingAccount ? signingAccount : 'Undefined'}, Network: ${chainId}`)
 
-
-  console.log(`CoW SDK initialized. Account: ${signerAddress ? signerAddress : 'Undefined'}, Network: ${chainId}`)
-  console.log('Config', {
-    appData: APP_DATA
-  })
-
+  const {
+    sellToken: sellTokenAddress,
+    buyToken: buyTokenAddress,
+    sellAmount,
+    receiver: receiverParam,
+    partiallyFillable = false,
+    appData = process.env.APP_DATA || APP_DATA
+  } = order
   
-  const { sellToken: sellTokenAddress, buyToken: buyTokenAddress, sellAmount, partiallyFillable = false } = order
+
+  // Decide what it sthe fromAccount and receiver
+  let fromAccount, receiver
+  if (account.accountType === 'EOA') {
+    assert(signingAccount, `The signer address is missing`)
+    fromAccount = signingAccount
+    receiver = receiverParam || fromAccount
+  } else {
+    assert(account.safeAddress, `The safeAddress is a required parameter for account type: ${account.accountType}`)
+    fromAccount = account.safeAddress
+    receiver = receiverParam || fromAccount
+  }
+
+  // Prepare quote order
   const quoteOrder = {
     // Type of order
     partiallyFillable,
@@ -133,98 +153,115 @@ async function run() {
     sellAmountBeforeFee: sellAmount, // 1 WETH
 
     // Trader
-    from: signerAddress,
-    receiver: signerAddress,
+    from: fromAccount,
+    receiver: receiver,
 
     // Deadline
     validTo: Math.ceil((Date.now() + DEADLINE_OFFSET) / 1000),
 
     // Metadata
-    appData: APP_DATA
+    appData
   }
 
-  console.log('quoteOrder', JSON.stringify(quoteOrder))
-//   const quoteResponse = await cowSdk.cowApi.getQuote(quoteOrder)
-//   console.log('quoteResponse', JSON.stringify(quoteResponse))
+  // Get quote
+  console.log('Get quote for order: ', JSON.stringify(quoteOrder, null, 2))
+  const quoteResponse = await cowSdk.cowApi.getQuote(quoteOrder)
+  console.log('quoteResponse', JSON.stringify(quoteResponse, null, 2))
   
-//   const { buyAmount, sellAmount, feeAmount } = quoteResponse.quote
+  const { buyAmount, feeAmount } = quoteResponse.quote
+  console.log(`Quote. Receive at least ${buyAmount} buy tokens. Fee = ${feeAmount}`)
 
-//   // Prepare the RAW order
-//   const rawOrder = {
-//     ...quoteOrder,
+  // Prepare the RAW order
+  const rawOrder = {
+    ...quoteOrder,
 
-//     // Limit Price
-//     //    TODO: apply some slippage
-//     sellAmount,
-//     buyAmount, 
+    // Limit Price
+    //    TODO: apply some slippage
+    sellAmount,
+    buyAmount, 
 
-//     // Fee
-//     feeAmount,    
-//     priceQuality: "optimal"
-//   }
+    // Fee
+    feeAmount,    
+    priceQuality: "optimal"
+  }
 
-    // const mockQuoteResult = {"quote":{"sellToken":"0xc778417e063141139fce010982780140aa0cd5ab","buyToken":"0x4dbcdf9b62e891a7cec5a2568c3f4faf9e8abe2b","receiver":"0xbbd50f14aa90d2d21329367cfd6710c92b9d1fda","sellAmount":"999724034906366998","buyAmount":"164577689090780","validTo":1658161259,"appData":"0x0000000000000000000000000000000000000000000000000000000000000000","feeAmount":"275965093633002","kind":"sell","partiallyFillable":false,"sellTokenBalance":"erc20","buyTokenBalance":"erc20"},"from":"0xbbd50f14aa90d2d21329367cfd6710c92b9d1fda","expiration":"2022-07-18T16:04:06.000748427Z","id":26755}
-
-
-//   // Sign the order
-//   const { signature, signingScheme } = await cowSdk.signOrder(rawOrder)
-//   assert(signature, 'signOrder must return the signature')
-
-//   console.log('Raw order', rawOrder)
-//   console.log('Signed order', {signature, signingScheme})
-
-//   // Post order
-//   const orderId = await cowSdk.cowApi.sendOrder({
-//     order: {
-//       ...rawOrder,
-//       signature,
-//       signingScheme
-//     },
-//     owner: account
-//   })
-
-  const orderId = '0xb9168d8014ab422f8b6e5d69dd618292a0b4c09b2d235a64a64a99e5817b02ba84e5c8518c248de590d5302fd7c32d2ae6b0123c627272e8' // mock
-
-
-  // Show link to explorer
-  console.log(`🚀 The order has been submitted. See https://explorer.cow.fi/orders/${orderId}
-See full history in https://explorer.cow.fi/address/${signerAddress}`)
-
-  const dataBundle: string[] = []
-
-  // TODO: if Ether, WRAP
-
-  // TODO: Decide if we need to include do approval
+  let orderId
+  const dataBundle: OnchainOperation[] = []
   // Get approval data
   const vaultAddress = vaultAddresses[chainId].address
   const sellToken = Erc20__factory.connect(sellTokenAddress, signerOrProvider)
   
   // Check allowance (decide if approve sellToken is required)
-  const allowance = BigNumber.from('200000000000000000')
-  // const allowance = await sellToken.allowance(account, vaultAddress)
+  const allowance = await sellToken.allowance(fromAccount, vaultAddress)
   if (allowance.lt(sellAmount)) {
     // Get the approve data
-    const approveData = sellToken.interface.encodeFunctionData('approve', [vaultAddress, MAX_U32])
-    console.log('approveData: ', approveData)
-    dataBundle.push(approveData)
+    dataBundle.push({
+      description: 'Approve sell token',
+      data: sellToken.interface.encodeFunctionData('approve', [vaultAddress, MAX_U32])
+    })
   }
 
+  if (account.accountType === 'SAFE' || account.accountType === 'SAFE_WITH_EOA_PROPOSER') {
+    // Post pre-sign order
+    orderId = await cowSdk.cowApi.sendOrder({
+      order: {
+        ...rawOrder,
+        signature: fromAccount, // TODO: I believe the signature is not required for pre-sign any more, but the SDK hasn't been updated
+        signingScheme: SigningScheme.PRESIGN
+      },
+      owner: signingAccount as string
+    })
 
-  // GEt Pre-sign order data
-  const settlementAddress = settlementAddresses[chainId].address
-  console.log('GPv2Settlement', settlementAddress)
-  const settlement = Settlement__factory.connect(settlementAddress, signerOrProvider)
-  const preSignData = settlement.interface.encodeFunctionData('setPreSignature', [orderId, true])
-  console.log('preSignData: ', preSignData)
-  dataBundle.push(preSignData)
+    // Get Pre-sign order data
+    const settlementAddress = settlementAddresses[chainId].address
+    console.log('GPv2Settlement', settlementAddress)
+    const settlement = Settlement__factory.connect(settlementAddress, signerOrProvider)
+    dataBundle.push({
+      description: 'Pre-sign order',
+      data: settlement.interface.encodeFunctionData('setPreSignature', [orderId, true])
+    })
+  }
+  
+  // // Pre-sign data
+  // if (dataBundle.length > 1) {
+  //   // TODO: Multicall
+  // } else {
+  //   // TODO: Simple tx
+  // }
+
+  if (account.accountType === 'EOA') {
+    console.log(`\n\n❓ Before sending the order, ${dataBundle.length} transactions need to be executed\n`)
+    for (const { data, description } of dataBundle) {
+      console.log(`    Are you sure you want to ${description}? (y/n)`)
+      console.log(`          Tx Data: ${data}`)
+    }
+
+    // Sign the order
+    const { signature, signingScheme } = await cowSdk.signOrder(rawOrder)
+    assert(signature, 'signOrder must return the signature')
+
+    console.log('Raw order', rawOrder)
+    console.log('Signed order', {signature, signingScheme})
+
+    // Post order
+    orderId = await cowSdk.cowApi.sendOrder({
+      order: {
+        ...rawOrder,
+        signature,
+        signingScheme
+      },
+      owner: signingAccount as string
+    })
+  } else {
+    throw new Error('Not implemented')
+  }
   
 
-  // Pre-sign data
-  if (dataBundle.length > 1) {
-    // TODO: Multicall
-  } else {
-    // TODO: Simple tx
-  }
+  orderId = '0xb9168d8014ab422f8b6e5d69dd618292a0b4c09b2d235a64a64a99e5817b02ba84e5c8518c248de590d5302fd7c32d2ae6b0123c627272e8' // mock
+
+  // Show link to explorer
+  console.log(`🚀 The order has been submitted. See https://explorer.cow.fi/orders/${orderId}
+See full history in https://explorer.cow.fi/address/${fromAccount}`)
 }
 
 run().catch(console.error)
