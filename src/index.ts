@@ -1,6 +1,7 @@
 import 'dotenv/config'
 
 import { Wallet, BigNumber, ethers } from "ethers";
+const chalk = require('chalk')
 
 import { strict as assert } from 'node:assert';
 
@@ -114,7 +115,7 @@ async function run() {
 
   // Instantiate SDK
   const cowSdk = new CowSdk(chainId, { signer })
-  console.log(`CoW SDK initialized. Signing Account: ${signingAccount ? signingAccount : 'Undefined'}, Network: ${chainId}`)
+  console.log(`${chalk.red('CoW SDK')} ${chalk.cyan('initialized')}. Signing Account: ${chalk.blue(signingAccount ? signingAccount : 'Undefined')}, Network: ${chalk.blue(chainId)}`)
 
   const {
     sellToken: sellTokenAddress,
@@ -164,13 +165,11 @@ async function run() {
   }
 
   // Get quote
-  console.log('Get quote for order: ', JSON.stringify(quoteOrder, null, 2))
+  console.log(`${chalk.cyan('Get quote for order')}:\n${JSON.stringify(quoteOrder, null, 2)}`)
   const quoteResponse = await cowSdk.cowApi.getQuote(quoteOrder)
-  console.log('quoteResponse', JSON.stringify(quoteResponse, null, 2))
-  
   const { buyAmount, feeAmount } = quoteResponse.quote
-  console.log(`Quote. Receive at least ${buyAmount} buy tokens. Fee = ${feeAmount}`)
-
+  console.log(`${chalk.cyan('Quote response')}: Receive at least ${chalk.blue(buyAmount)} buy tokens. Fee = ${chalk.blue(feeAmount)}\n${JSON.stringify(quoteResponse, null, 2)} sell tokens.`)
+  
   // Prepare the RAW order
   const rawOrder = {
     ...quoteOrder,
@@ -184,6 +183,7 @@ async function run() {
     feeAmount,    
     priceQuality: "optimal"
   }
+  console.log(`${chalk.cyan('Raw order')}: \n${JSON.stringify(rawOrder, null, 2)}`)
 
   let orderId
   const dataBundle: OnchainOperation[] = []
@@ -214,7 +214,6 @@ async function run() {
 
     // Get Pre-sign order data
     const settlementAddress = settlementAddresses[chainId].address
-    console.log('GPv2Settlement', settlementAddress)
     const settlement = Settlement__factory.connect(settlementAddress, signerOrProvider)
     dataBundle.push({
       description: 'Pre-sign order',
@@ -230,17 +229,19 @@ async function run() {
   // }
 
   if (account.accountType === 'EOA') {
-    console.log(`\n\n❓ Before sending the order, ${dataBundle.length} transactions need to be executed\n`)
+    const txTotal = dataBundle.length
+    console.log(`\n\n${chalk.cyan(`${chalk.red(txTotal)} transactions need to be executed`)} before the order can be posted:\n`)
+    let txNumber = 1
     for (const { data, description } of dataBundle) {
-      console.log(`    Are you sure you want to ${description}? (y/n)`)
-      console.log(`          Tx Data: ${data}`)
+      console.log(`    [${txNumber}/${txTotal}] ${chalk.cyan('Are you sure you want to')} ${chalk.blue(description)}?}`)
+      console.log(`          ${chalk.bold('Tx Data')}: ${data}`)
+      console.log(`Approve transaction? ${chalk.italic('(y/n)')}`)
+      txNumber++
     }
 
     // Sign the order
     const { signature, signingScheme } = await cowSdk.signOrder(rawOrder)
-    assert(signature, 'signOrder must return the signature')
-
-    console.log('Raw order', rawOrder)
+    assert(signature, 'signOrder must return the signature')    
     console.log('Signed order', {signature, signingScheme})
 
     // Post order
@@ -260,8 +261,8 @@ async function run() {
   orderId = '0xb9168d8014ab422f8b6e5d69dd618292a0b4c09b2d235a64a64a99e5817b02ba84e5c8518c248de590d5302fd7c32d2ae6b0123c627272e8' // mock
 
   // Show link to explorer
-  console.log(`🚀 The order has been submitted. See https://explorer.cow.fi/orders/${orderId}
-See full history in https://explorer.cow.fi/address/${fromAccount}`)
+  console.log(`🚀 ${chalk.cyan('The order has been submitted')}. See ${chalk.blue('https://explorer.cow.fi/orders/' + orderId)}
+              See ${chalk.underline('full history')} in ${chalk.blue('https://explorer.cow.fi/address/' + fromAccount)}`)
 }
 
 run().catch(console.error)
