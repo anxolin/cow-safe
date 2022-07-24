@@ -1,6 +1,7 @@
 import 'dotenv/config'
 
 import * as readline from 'readline'
+import { TransactionRequest, TransactionResponse } from "@ethersproject/abstract-provider";
 import { Wallet, BigNumber, ethers } from "ethers";
 const chalk = require('chalk')
 
@@ -19,6 +20,8 @@ type ChainId = 1 | 4 | 5 | 100
 
 const APP_DATA = process.env.APP_DATA || '0x0000000000000000000000000000000000000000000000000000000000000000'
 const DEADLINE_OFFSET = 30 * 60 * 1000 // 30min
+
+const NUMBER_CONFIRMATIONS_WAIT = 1
 
 type AccoutType = 'EOA' | 'SAFE' | 'SAFE_WITH_EOA_PROPOSER'
 
@@ -45,7 +48,7 @@ interface OrderParams {
 
 interface OnchainOperation {
   description: string
-  data: string
+  txRequest: Required<Pick<TransactionRequest, 'to' | 'data'>>
 }
 
 const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
@@ -115,6 +118,36 @@ function getOrder(): OrderParams {
       // buyAmount, // Empty to get the price. TODO: add buyAmount support, or add slippage
     }
   }
+}
+
+function getExplorerUrl(chainId: ChainId) {
+  switch (chainId) {
+    case 1:    
+      return 'https://etherscan.io/tx'
+    case 4:    
+      return 'https://rinkeby.etherscan.io/tx'
+    case 5:    
+      return 'https://goerli.etherscan.io/tx'
+    case 100:    
+      return 'https://blockscout.com/xdai/mainnet/tx/'
+    default:
+      throw new Error('Unknonw network: ' + chainId)
+  }
+}
+
+function getCowExplorerUrl(chainId: ChainId) {
+  switch (chainId) {
+    case 1:    
+      return 'https://explorer.cow.fi'
+    case 4:    
+      return 'https://explorer.cow.fi/rinkeby'
+    case 5:    
+      return 'https://explorer.cow.fi/goerli'
+    case 100:    
+    return 'https://explorer.cow.fi/gc'
+    default:
+      throw new Error('Unknonw network: ' + chainId)
+  }  
 }
 
 async function run() {
@@ -217,7 +250,10 @@ async function run() {
     // Get the approve data
     dataBundle.push({
       description: 'Approve sell token',
-      data: sellToken.interface.encodeFunctionData('approve', [vaultAddress, MAX_U32])
+      txRequest: {
+        to: sellTokenAddress,
+        data: sellToken.interface.encodeFunctionData('approve', [vaultAddress, MAX_U32])
+      }
     })
   }
 
@@ -237,29 +273,36 @@ async function run() {
     const settlement = Settlement__factory.connect(settlementAddress, signerOrProvider)
     dataBundle.push({
       description: 'Pre-sign order',
-      data: settlement.interface.encodeFunctionData('setPreSignature', [orderId, true])
+      txRequest: {
+        to: settlementAddress,
+        data: settlement.interface.encodeFunctionData('setPreSignature', [orderId, true])
+      }
     })
   }
-  
-  // // Pre-sign data
-  // if (dataBundle.length > 1) {
-  //   // TODO: Multicall
-  // } else {
-  //   // TODO: Simple tx
-  // }
 
   if (account.accountType === 'EOA') {
+    assert(signer)
     const txTotal = dataBundle.length
     console.log(`\n\n${chalk.cyan(`${chalk.red(txTotal)} transactions need to be executed`)} before the order can be posted:\n`)
     let txNumber = 1
-    for (const { data, description } of dataBundle) {
+    for (const { txRequest, description } of dataBundle) {
+      const { to, data } = txRequest
       console.log(`    [${txNumber}/${txTotal}] ${chalk.cyan('Are you sure you want to')} ${chalk.blue(description)}?}`)
+      console.log(`          ${chalk.bold('To')}: ${to}`)
       console.log(`          ${chalk.bold('Tx Data')}: ${data}`)
       txNumber++
       const sendTransaction = await confirm(`    Approve transaction? ${chalk.italic('(y/n)')}: `)
-      if (sendTransaction) {
-        const tx = '0x0d6f18a97690de9d70cdfe00231ee6baf722a12669f3260fb1faf3d2e25dca38'
-        console.log(`Sent transaction for ${chalk.blue(description)}. Review in block explorer: ${chalk.blue('https://etherscan.io/tx/' + tx)}`)
+      if (sendTransaction) {        
+        const txResponse = await signer.sendTransaction({
+          from: signingAccount,
+          to,
+          data
+        })
+        // console.log(JSON.stringify(txResponse, null, 2))
+        console.log(`    Sent transaction for ${chalk.blue(description)}. Review in block explorer: ${chalk.blue(getExplorerUrl(chainId) + '/' + txResponse.hash)}`)
+        await txResponse.wait()
+        console.log(`    🎉 ${chalk.cyan('Transactions was mined!')} waiting for ${chalk.red(NUMBER_CONFIRMATIONS_WAIT)} confirmations before continuing`)
+        await txResponse.wait(NUMBER_CONFIRMATIONS_WAIT)
       } else {
         console.log(chalk.cyan('\nUnderstood! Not sending the transaction. Have a nice day 👋'))
         exit(100)
@@ -268,8 +311,9 @@ async function run() {
 
     // Sign the order
     const { signature, signingScheme } = await cowSdk.signOrder(rawOrder)
-    assert(signature, 'signOrder must return the signature')    
-    console.log('Signed order', {signature, signingScheme})
+    assert(signature, 'signOrder must return the signature')
+
+    console.log(`${chalk.cyan('Signed off-chain order using EIP-712')}. Signature: ${chalk.blue(signature)}, Signing Scheme: ${chalk.blue(signingScheme)}`)
 
     // Post order
     orderId = await cowSdk.cowApi.sendOrder({
@@ -281,15 +325,23 @@ async function run() {
       owner: signingAccount as string
     })
   } else {
+    // // Pre-sign data
+    // if (dataBundle.length > 1) {
+    //   // TODO: Multicall
+    // } else {
+    //   // TODO: Simple tx
+    // }
+
+
     throw new Error('Not implemented')
   }
   
-
-  orderId = '0xb9168d8014ab422f8b6e5d69dd618292a0b4c09b2d235a64a64a99e5817b02ba84e5c8518c248de590d5302fd7c32d2ae6b0123c627272e8' // mock
-
   // Show link to explorer
-  console.log(`🚀 ${chalk.cyan('The order has been submitted')}. See ${chalk.blue('https://explorer.cow.fi/orders/' + orderId)}
-              See ${chalk.underline('full history')} in ${chalk.blue('https://explorer.cow.fi/address/' + fromAccount)}`)
+  const cowExplorerUrl = getCowExplorerUrl(chainId)
+  console.log(`🚀 ${chalk.cyan('The order has been submitted')}. See ${chalk.blue(`${cowExplorerUrl}/orders/${orderId}`)}
+              See ${chalk.underline('full history')} in ${chalk.blue(`${cowExplorerUrl}/address/${fromAccount}`)}`)
+
+  exit(0)
 }
 
 run().catch(error => {
