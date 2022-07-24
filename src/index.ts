@@ -1,5 +1,6 @@
 import 'dotenv/config'
 
+import * as readline from 'readline'
 import { Wallet, BigNumber, ethers } from "ethers";
 const chalk = require('chalk')
 
@@ -10,6 +11,7 @@ import { OrderBalance, SigningScheme } from '@cowprotocol/contracts';
 import { GPv2Settlement as settlementAddresses, GPv2VaultRelayer as vaultAddresses } from '@cowprotocol/contracts/networks.json'
 
 import { Settlement__factory, Erc20__factory } from './abi/types';
+import { exit } from 'process';
 
 const MAX_U32 = BigNumber.from("0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff")
 const SUPPORTED_CHAIN_IDS = [1, 4, 5, 100]
@@ -44,6 +46,18 @@ interface OrderParams {
 interface OnchainOperation {
   description: string
   data: string
+}
+
+const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
+const ask = (query: string) => new Promise((resolve) => rl.question(query, resolve));
+const confirm = async (query: string): Promise<boolean> => {
+  const response = await ask(query)
+  if (response === 'y' || response === 'Y') return true
+  else if (response === 'n' || response === 'N') return false
+  else {
+    console.log(`${chalk.red(`Invalid response`)}: Please reply with a ${chalk.bold('Y')} or a ${chalk.bold('N')}`)
+    return await confirm(query)
+  }
 }
 
 function getProvider(chainId: ChainId): ethers.providers.Provider {
@@ -235,8 +249,15 @@ async function run() {
     for (const { data, description } of dataBundle) {
       console.log(`    [${txNumber}/${txTotal}] ${chalk.cyan('Are you sure you want to')} ${chalk.blue(description)}?}`)
       console.log(`          ${chalk.bold('Tx Data')}: ${data}`)
-      console.log(`Approve transaction? ${chalk.italic('(y/n)')}`)
       txNumber++
+      const sendTransaction = await confirm(`    Approve transaction? ${chalk.italic('(y/n)')}: `)
+      if (sendTransaction) {
+        const tx = '0x0d6f18a97690de9d70cdfe00231ee6baf722a12669f3260fb1faf3d2e25dca38'
+        console.log(`Sent transaction for ${chalk.blue(description)}. Review in block explorer: ${chalk.blue('https://etherscan.io/tx/' + tx)}`)
+      } else {
+        console.log(chalk.cyan('\nUnderstood! Not sending the transaction. Have a nice day 👋'))
+        exit(100)
+      }
     }
 
     // Sign the order
@@ -265,7 +286,11 @@ async function run() {
               See ${chalk.underline('full history')} in ${chalk.blue('https://explorer.cow.fi/address/' + fromAccount)}`)
 }
 
-run().catch(console.error)
+run().catch(error => {
+  console.error(error)
+  console.log(`\n${chalk.cyan('There was some errors')}. Exiting now! 👋`)
+  exit(200)
+})
 
 
 
