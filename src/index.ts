@@ -454,7 +454,7 @@ async function run() {
         const executeTransaction = await confirm(`${chalk.cyan('Would you also like to execute the transaction?')} This step is not stricltly required. Anyone can execute now the transaction using the UI`)
         if (executeTransaction) {
           const safeTxResult = await safe.executeTransaction(safeTx)
-          console.log(`${chalk.cyan('🎉 Safe transaction has been executed')}:\n${JSON.stringify(safeTxResult, null, 2)}`)
+          console.log(`${chalk.cyan('🎉 Safe transaction has been sent')}: Review in block explorer: ${chalk.blue(getExplorerUrl(chainId) + '/' + safeTxResult.hash)}`)
         } else {
           console.log(`${chalk.cyan('OK remember someone will need to execute before the order expires')}`)
         }
