@@ -167,6 +167,21 @@ function getGnosisSafeServiceUrl(chainId: ChainId) {
   }  
 }
 
+function getSafeNetworkShortname(chainId: ChainId) {
+  switch (chainId) {
+    case 1:    
+      return 'eth'
+    case 4:    
+      return 'rin'
+    case 5:    
+      return 'gor'
+    case 100:    
+    return 'gc'
+    default:
+      throw new Error('Unknonw network: ' + chainId)
+  }
+}
+
 async function run() {
   const myArgs = process.argv.slice(2)
   if (myArgs.length === 0) {
@@ -294,29 +309,6 @@ async function run() {
     })
   }
 
-  if (account.accountType === 'SAFE' || account.accountType === 'SAFE_WITH_EOA_PROPOSER') {
-    // Post pre-sign order
-    orderId = await cowSdk.cowApi.sendOrder({
-      order: {
-        ...rawOrder,
-        signature: fromAccount, // TODO: I believe the signature is not required for pre-sign any more, but the SDK hasn't been updated
-        signingScheme: SigningScheme.PRESIGN
-      },
-      owner: signingAccount as string
-    })
-
-    // Get Pre-sign order data
-    const settlementAddress = settlementAddresses[chainId].address
-    const settlement = Settlement__factory.connect(settlementAddress, signerOrProvider)
-    dataBundle.push({
-      description: 'Pre-sign order',
-      txRequest: {
-        to: settlementAddress,
-        value: '0',
-        data: settlement.interface.encodeFunctionData('setPreSignature', [orderId, true])
-      }
-    })
-  }
 
   if (account.accountType === 'EOA') {
     assert(signer)
@@ -389,27 +381,78 @@ async function run() {
     console.log(`    ${chalk.bold('Address')}: ${chalk.blue(fromAccount)}`)
     console.log(`    ${chalk.bold('Theshold:')} ${chalk.blue(threshold)} out of ${chalk.blue(owners.length)}`)
     console.log(`    ${chalk.bold('Owners:')} ${chalk.blue(owners.join(', '))}\n`)
+    
 
     const postOrder = await confirm(`${chalk.cyan('Are you sure you want to post this order?')}`)
     if (postOrder) {
+      // // Post pre-sign order
+      // orderId = await cowSdk.cowApi.sendOrder({
+      //   order: {
+      //     ...rawOrder,
+      //     signature: fromAccount, // TODO: I believe the signature is not required for pre-sign any more, but the SDK hasn't been updated
+      //     signingScheme: SigningScheme.PRESIGN
+      //   },
+      //   owner: signingAccount as string
+      // })
+
+      // // Get Pre-sign order data
+      // const settlementAddress = settlementAddresses[chainId].address
+      // const settlement = Settlement__factory.connect(settlementAddress, signerOrProvider)
+      // dataBundle.push({
+      //   description: 'Pre-sign order',
+      //   txRequest: {
+      //     to: settlementAddress,
+      //     value: '0',
+      //     data: settlement.interface.encodeFunctionData('setPreSignature', [orderId, true])
+      //   }
+      // })
+
+      // Print all the bundled transactions
+      const txTotal = dataBundle.length    
+      if (txTotal > 0) {
+        console.log(`\n\n${chalk.cyan(`${chalk.red(txTotal)} Bundling Transactions`)}: Using Gnosis Safe\n`)
+        let txNumber = 1
+        for (const { txRequest, description } of dataBundle) {
+          const { to, data } = txRequest
+          console.log(`    [${txNumber}/${txTotal}] ${chalk.blue(description)}`)
+          console.log(`          ${chalk.bold('To')}: ${to}`)
+          console.log(`          ${chalk.bold('Tx Data')}: ${data}`)
+          txNumber++
+        }
+      }
+
       // Create bundle transaction
-      const safeTx = await safe.createTransaction(dataBundle.map(tx => tx.txRequest), {})
+      const safeTx = await safe.createTransaction(dataBundle.map(tx => tx.txRequest), {safeTxGas: 6000000, baseGas: 5000000})
       await safe.signTransaction(safeTx)
       
       const safeTxHash = await safe.getTransactionHash(safeTx)
       // safeTx.addSignature()
 
       // Send transaction to safe service API
+      const senderSignature = safeTx.encodedSignatures()
       const safeTxProposal = {
         safeAddress: fromAccount,
         safeTransactionData: safeTx.data,
         safeTxHash: safeTxHash,
         senderAddress: signer.address,
-        senderSignature: safeTx.encodedSignatures()
+        senderSignature
       }
-      console.log(`${chalk.cyan('Propose transaction (in UI)')}\n${JSON.stringify(safeTxProposal, null, 2)}`)
+      const uiUrl = `https://gnosis-safe.io/app/${getSafeNetworkShortname(chainId)}:${fromAccount}/transactions/queue`
+      console.log(`${chalk.cyan('\nPropose Bundled Transaction')}: In UI (${uiUrl})\n${JSON.stringify(safeTxProposal, null, 2)}`)
       await safeApi.proposeTransaction(safeTxProposal)
-      console.log(`${chalk.cyan('🎉 Safe transaction has been created')}\n`)
+      console.log(`${chalk.cyan('🎉 Safe transaction has been created')}: See ${uiUrl}\n`)
+
+      if (threshold === 1) {
+        const executeTransaction = await confirm(`${chalk.cyan('Would you also like to execute the transaction?')} This step is not stricltly required. Anyone can execute now the transaction using the UI`)
+        if (executeTransaction) {
+          const safeTxResult = await safe.executeTransaction(safeTx)
+          console.log(`${chalk.cyan('🎉 Safe transaction has been executed')}:\n${JSON.stringify(safeTxResult, null, 2)}`)
+        } else {
+          console.log(`${chalk.cyan('OK remember someone will need to execute before the order expires')}`)
+        }
+      } else {
+        console.log(`${chalk.cyan(`Order created, but more signatures are required`)}: The order will need to be signed by other ${chalk.blue(threshold - 1)} signer(s)`)
+      }
     } else {
       console.log(chalk.cyan('\nUnderstood! Not sending the order. Have a nice day 👋'))
       exit(100)
@@ -431,7 +474,3 @@ run().catch(error => {
   console.log(`\n${chalk.cyan('There was some errors')}. Exiting now! 👋`)
   exit(200)
 })
-
-
-
-
