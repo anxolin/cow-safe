@@ -182,6 +182,13 @@ function getSafeNetworkShortname(chainId: ChainId) {
   }
 }
 
+function printExplorer(orderId: string, fromAccount: string, chainId: ChainId) {
+  // Show link to explorer
+  const cowExplorerUrl = getCowExplorerUrl(chainId)
+  console.log(`\n🚀 ${chalk.cyan('The order has been submitted')}. See ${chalk.blue(`${cowExplorerUrl}/orders/${orderId}`)}
+              See ${chalk.underline('full history')} in ${chalk.blue(`${cowExplorerUrl}/address/${fromAccount}`)}`)
+}
+
 async function run() {
   const myArgs = process.argv.slice(2)
   if (myArgs.length === 0) {
@@ -220,11 +227,11 @@ async function run() {
   if (accountType === 'EOA') {
     assert(signingAccount, `The signer address is missing`)
     fromAccount = signingAccount
-    receiver = receiverParam || fromAccount
+    receiver = receiverParam || signingAccount
   } else {
     assert(safeAddress, `The safeAddress is a required parameter for account type: ${account.accountType}`)
     fromAccount = safeAddress
-    receiver = receiverParam || fromAccount
+    receiver = receiverParam || safeAddress
   }
 
   // Prepare quote order
@@ -385,27 +392,28 @@ async function run() {
 
     const postOrder = await confirm(`${chalk.cyan('Are you sure you want to post this order?')}`)
     if (postOrder) {
-      // // Post pre-sign order
-      // orderId = await cowSdk.cowApi.sendOrder({
-      //   order: {
-      //     ...rawOrder,
-      //     signature: fromAccount, // TODO: I believe the signature is not required for pre-sign any more, but the SDK hasn't been updated
-      //     signingScheme: SigningScheme.PRESIGN
-      //   },
-      //   owner: signingAccount as string
-      // })
+      // Post pre-sign order
+      orderId = await cowSdk.cowApi.sendOrder({
+        order: {
+          ...rawOrder,
+          signature: fromAccount, // TODO: I believe the signature is not required for pre-sign any more, but the SDK hasn't been updated
+          signingScheme: SigningScheme.PRESIGN
+        },
+        owner: safeAddress as string
+      })
+      printExplorer(orderId, fromAccount, chainId)
 
-      // // Get Pre-sign order data
-      // const settlementAddress = settlementAddresses[chainId].address
-      // const settlement = Settlement__factory.connect(settlementAddress, signerOrProvider)
-      // dataBundle.push({
-      //   description: 'Pre-sign order',
-      //   txRequest: {
-      //     to: settlementAddress,
-      //     value: '0',
-      //     data: settlement.interface.encodeFunctionData('setPreSignature', [orderId, true])
-      //   }
-      // })
+      // Get Pre-sign order data
+      const settlementAddress = settlementAddresses[chainId].address
+      const settlement = Settlement__factory.connect(settlementAddress, signerOrProvider)
+      dataBundle.push({
+        description: 'Pre-sign order',
+        txRequest: {
+          to: settlementAddress,
+          value: '0',
+          data: settlement.interface.encodeFunctionData('setPreSignature', [orderId, true])
+        }
+      })
 
       // Print all the bundled transactions
       const txTotal = dataBundle.length    
@@ -422,7 +430,7 @@ async function run() {
       }
 
       // Create bundle transaction
-      const safeTx = await safe.createTransaction(dataBundle.map(tx => tx.txRequest), {safeTxGas: 6000000, baseGas: 5000000})
+      const safeTx = await safe.createTransaction(dataBundle.map(tx => tx.txRequest))
       await safe.signTransaction(safeTx)
       
       const safeTxHash = await safe.getTransactionHash(safeTx)
@@ -461,10 +469,8 @@ async function run() {
     throw new Error('Not implemented')
   }
   
-  // Show link to explorer
-  const cowExplorerUrl = getCowExplorerUrl(chainId)
-  console.log(`\n🚀 ${chalk.cyan('The order has been submitted')}. See ${chalk.blue(`${cowExplorerUrl}/orders/${orderId}`)}
-              See ${chalk.underline('full history')} in ${chalk.blue(`${cowExplorerUrl}/address/${fromAccount}`)}`)
+  printExplorer(orderId, fromAccount, chainId)
+  
 
   exit(0)
 }
