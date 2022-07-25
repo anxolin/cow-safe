@@ -1,19 +1,27 @@
 import 'dotenv/config'
 
-import * as readline from 'readline'
+import { strict as assert } from 'node:assert'
+import { exit } from 'process'
 import * as fs from 'fs/promises'
-import { TransactionRequest, TransactionResponse } from "@ethersproject/abstract-provider";
-import { Wallet, BigNumber, ethers } from "ethers";
+
+import * as readline from 'readline'
 const chalk = require('chalk')
 
-import { strict as assert } from 'node:assert';
+import { Wallet, BigNumber, ethers } from "ethers"
+import { TransactionRequest, TransactionResponse } from "@ethersproject/abstract-provider"
+
+import EthersAdapter from '@gnosis.pm/safe-ethers-lib'
+import Safe from '@gnosis.pm/safe-core-sdk'
+import SafeServiceClient from '@gnosis.pm/safe-service-client'
+
+import { MetaTransactionData } from '@gnosis.pm/safe-core-sdk-types'
+
 
 import { CowSdk, OrderKind } from '@cowprotocol/cow-sdk'
 import { OrderBalance, SigningScheme, QuoteQuery } from '@cowprotocol/contracts';
 import { GPv2Settlement as settlementAddresses, GPv2VaultRelayer as vaultAddresses } from '@cowprotocol/contracts/networks.json'
 
 import { Settlement__factory, Erc20__factory } from './abi/types';
-import { exit } from 'process';
 
 const SUPPORTED_CHAIN_IDS = [1, 4, 5, 100]
 type ChainId = 1 | 4 | 5 | 100
@@ -26,14 +34,14 @@ const DEFAULT_SLIPPAGE_BIPS = 100
 
 const NUMBER_CONFIRMATIONS_WAIT = 1
 
-type AccoutType = 'EOA' | 'SAFE' | 'SAFE_WITH_EOA_PROPOSER'
+export type AccoutType = 'EOA' | 'SAFE' | 'SAFE_WITH_EOA_PROPOSER'
 
-interface AccountParams {
+export interface AccountParams {
   accountType: AccoutType
   safeAddress?: string // TODO: not used yet. It will allow to specify the Gnosis Safe address for SAFE_WITH_EOA_PROPOSER setup
 }
 
-interface LimitOrderParams {
+export interface LimitOrderParams {
   sellToken: string
   buyToken: string
   sellAmountBeforeFee: string
@@ -44,15 +52,17 @@ interface LimitOrderParams {
   slippageToleranceBips?: string
 }
 
-interface OrderParams {
+export interface OrderParams {
   chainId?: ChainId
   account: AccountParams
   order: LimitOrderParams  
 }
 
-interface OnchainOperation {
+export type TxRequest = Pick<MetaTransactionData, 'to' | 'value' | 'data'> // Required<Pick<TransactionRequest, 'to' | 'value' | 'data'>>
+
+export interface OnchainOperation {
   description: string
-  txRequest: Required<Pick<TransactionRequest, 'to' | 'data'>>
+  txRequest: TxRequest
 }
 
 const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
@@ -142,6 +152,21 @@ function getCowExplorerUrl(chainId: ChainId) {
   }  
 }
 
+function getGnosisSafeServiceUrl(chainId: ChainId) {
+  switch (chainId) {
+    case 1:    
+      return 'https://safe-transaction.gnosis.io'
+    case 4:    
+      return 'https://safe-transaction.rinkeby.gnosis.io'
+    case 5:    
+      return 'https://safe-transaction.goerli.gnosis.io'
+    case 100:    
+    return 'https://safe-transaction.xdai.gnosis.io'
+    default:
+      throw new Error('Unknonw network: ' + chainId)
+  }  
+}
+
 async function run() {
   const myArgs = process.argv.slice(2)
   if (myArgs.length === 0) {
@@ -154,8 +179,9 @@ async function run() {
   const { chainId = getChainIdFromEnv(), account, order } = await getOrder(orderFilePath)
 
   // Get Provider/Signer
+  const { accountType, safeAddress  } = account
   const provider = getProvider(chainId)
-  const signer = getSigner(account.accountType, provider)
+  const signer = getSigner(accountType, provider)
   const signingAccount = signer?.address
   const signerOrProvider = signer || provider
 
@@ -176,13 +202,13 @@ async function run() {
 
   // Decide what it sthe fromAccount and receiver
   let fromAccount: string, receiver: string
-  if (account.accountType === 'EOA') {
+  if (accountType === 'EOA') {
     assert(signingAccount, `The signer address is missing`)
     fromAccount = signingAccount
     receiver = receiverParam || fromAccount
   } else {
-    assert(account.safeAddress, `The safeAddress is a required parameter for account type: ${account.accountType}`)
-    fromAccount = account.safeAddress
+    assert(safeAddress, `The safeAddress is a required parameter for account type: ${account.accountType}`)
+    fromAccount = safeAddress
     receiver = receiverParam || fromAccount
   }
 
@@ -262,6 +288,7 @@ async function run() {
       description: 'Approve sell token',
       txRequest: {
         to: sellTokenAddress,
+        value: '0',
         data: sellToken.interface.encodeFunctionData('approve', [vaultAddress, MAX_U32])
       }
     })
@@ -285,6 +312,7 @@ async function run() {
       description: 'Pre-sign order',
       txRequest: {
         to: settlementAddress,
+        value: '0',
         data: settlement.interface.encodeFunctionData('setPreSignature', [orderId, true])
       }
     })
@@ -342,21 +370,57 @@ async function run() {
       console.log(chalk.cyan('\nUnderstood! Not sending the order. Have a nice day 👋'))
       exit(100)
     }    
+  } else if (account.accountType === 'SAFE_WITH_EOA_PROPOSER') {
+    assert(signer)
+    const ethAdapter = new EthersAdapter({
+      ethers,
+      signer
+    })
+
+    // Instantiate API and 
+    const safeApi = new SafeServiceClient({ txServiceUrl: getGnosisSafeServiceUrl(chainId), ethAdapter })
+    
+    // Instantiate the safe
+    const safe = await Safe.create({ ethAdapter, safeAddress: fromAccount })
+    
+    // Print safe info
+    const { nonce, owners, threshold } = await safeApi.getSafeInfo(fromAccount)
+    console.log(`\n${chalk.cyan('Using safe:')}`)
+    console.log(`    ${chalk.bold('Address')}: ${chalk.blue(fromAccount)}`)
+    console.log(`    ${chalk.bold('Theshold:')} ${chalk.blue(threshold)} out of ${chalk.blue(owners.length)}`)
+    console.log(`    ${chalk.bold('Owners:')} ${chalk.blue(owners.join(', '))}\n`)
+
+    const postOrder = await confirm(`${chalk.cyan('Are you sure you want to post this order?')}`)
+    if (postOrder) {
+      // Create bundle transaction
+      const safeTx = await safe.createTransaction(dataBundle.map(tx => tx.txRequest), {})
+      await safe.signTransaction(safeTx)
+      
+      const safeTxHash = await safe.getTransactionHash(safeTx)
+      // safeTx.addSignature()
+
+      // Send transaction to safe service API
+      const safeTxProposal = {
+        safeAddress: fromAccount,
+        safeTransactionData: safeTx.data,
+        safeTxHash: safeTxHash,
+        senderAddress: signer.address,
+        senderSignature: safeTx.encodedSignatures()
+      }
+      console.log(`${chalk.cyan('Propose transaction (in UI)')}\n${JSON.stringify(safeTxProposal, null, 2)}`)
+      await safeApi.proposeTransaction(safeTxProposal)
+      console.log(`${chalk.cyan('🎉 Safe transaction has been created')}\n`)
+    } else {
+      console.log(chalk.cyan('\nUnderstood! Not sending the order. Have a nice day 👋'))
+      exit(100)
+    }
   } else {
-    // // Pre-sign data
-    // if (dataBundle.length > 1) {
-    //   // TODO: Multicall
-    // } else {
-    //   // TODO: Simple tx
-    // }
-
-
     throw new Error('Not implemented')
   }
   
   // Show link to explorer
   const cowExplorerUrl = getCowExplorerUrl(chainId)
-  console.log(`🚀 ${chalk.cyan('The order has been submitted')}. See ${chalk.blue(`${cowExplorerUrl}/orders/${orderId}`)}
+  console.log(`\n🚀 ${chalk.cyan('The order has been submitted')}. See ${chalk.blue(`${cowExplorerUrl}/orders/${orderId}`)}
               See ${chalk.underline('full history')} in ${chalk.blue(`${cowExplorerUrl}/address/${fromAccount}`)}`)
 
   exit(0)
