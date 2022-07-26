@@ -1,0 +1,13 @@
+{
+  "chainId": 4,
+  "account": {
+    "accountType": "SAFE_WITH_EOA_PROPOSER",
+    "safeAddress": "0xFF7C339C96909d6bD0C80C6D112Ed01a831BDD3e"
+  },
+  "order": {
+    "sellToken": "0xc778417E063141139Fce010982780140Aa0cD5Ab",
+    "buyToken": "0x4DBCdF9B62e891a7cec5A2568C3F4FAF9E8Abe2b",
+    "sellAmountBeforeFee": "100000000000000000",
+    "partiallyFillable": false
+  }
+}
