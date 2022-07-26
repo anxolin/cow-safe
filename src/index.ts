@@ -98,7 +98,7 @@ async function run() {
 
   // Get quote
   console.log(`${chalk.cyan('Get quote for order')}:\n${JSON.stringify(quoteOrder, null, 2)}`)
-  const quoteResponse = await cowSdk.cowApi.getQuote(quoteOrder) // TODO: Fix any here. The SDK requires "amount" which is not required
+  const quoteResponse = await cowSdk.cowApi.getQuote(quoteOrder) 
   const { sellAmount, buyAmount, feeAmount } = quoteResponse.quote
   console.log(`${chalk.cyan('Quote response')}: Receive at least ${chalk.blue(buyAmount)} buy tokens. Fee = ${chalk.blue(feeAmount)}\n${JSON.stringify(quoteResponse, null, 2)} sell tokens.`)
 
@@ -174,7 +174,6 @@ async function run() {
             to,
             data
           })
-          // console.log(JSON.stringify(txResponse, null, 2))
           console.log(`    Sent transaction for ${chalk.blue(description)}. Review in block explorer: ${chalk.blue(getExplorerUrl(chainId) + '/' + txResponse.hash)}`)
           await txResponse.wait()
           console.log(`    🎉 ${chalk.cyan('Transactions was mined!')} waiting for ${chalk.red(NUMBER_CONFIRMATIONS_WAIT)} confirmations before continuing`)
