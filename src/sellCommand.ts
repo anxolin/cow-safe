@@ -60,7 +60,7 @@ async function run() {
   } = order
   
 
-  // Decide who os the fromAccount and receiver
+  // Decide who is the fromAccount and receiver
   let fromAccount: string, receiver: string
   if (accountType === 'EOA') {
     // In EOA is the signing account
