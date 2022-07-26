@@ -271,9 +271,7 @@ async function run() {
       // Create bundle transaction
       const safeTx = await safe.createTransaction(txs.map(tx => tx.txRequest))
       await safe.signTransaction(safeTx)
-      
       const safeTxHash = await safe.getTransactionHash(safeTx)
-      // safeTx.addSignature()
 
       // Send transaction to safe service API
       const senderSignature = safeTx.encodedSignatures()
@@ -284,12 +282,15 @@ async function run() {
         senderAddress: signer.address,
         senderSignature
       }
+
+      // Propose transaction to Safe UI
       const uiUrl = `https://gnosis-safe.io/app/${getSafeNetworkShortname(chainId)}:${fromAccount}/transactions/queue`
       console.log(`${chalk.cyan('\nPropose Bundled Transaction')}: In UI (${uiUrl})\n${JSON.stringify(safeTxProposal, null, 2)}`)
       await safeApi.proposeTransaction(safeTxProposal)
       console.log(`${chalk.cyan('🎉 Safe transaction has been created')}: See ${uiUrl}\n`)
 
       if (threshold === 1) {
+        // If we have enough signatures, we offer to also execute
         const executeTransaction = await confirm(`${chalk.cyan('Would you also like to execute the transaction?')} This step is not stricltly required. Anyone can execute now the transaction using the UI`)
         if (executeTransaction) {
           const safeTxResult = await safe.executeTransaction(safeTx)
