@@ -1,186 +1,24 @@
 import 'dotenv/config'
-
 import { strict as assert } from 'node:assert'
 import { exit } from 'process'
-import * as fs from 'fs/promises'
-
-import * as readline from 'readline'
 const chalk = require('chalk')
+import { BigNumber, ethers } from "ethers"
 
-import { Wallet, BigNumber, ethers } from "ethers"
-import { TransactionRequest, TransactionResponse } from "@ethersproject/abstract-provider"
-
+// Gnosis Safe dependencies
 import EthersAdapter from '@gnosis.pm/safe-ethers-lib'
 import Safe from '@gnosis.pm/safe-core-sdk'
 import SafeServiceClient from '@gnosis.pm/safe-service-client'
 
-import { MetaTransactionData } from '@gnosis.pm/safe-core-sdk-types'
-
-
+// CoW Protocol dependencies
 import { CowSdk, OrderKind } from '@cowprotocol/cow-sdk'
 import { OrderBalance, SigningScheme, QuoteQuery } from '@cowprotocol/contracts';
 import { GPv2Settlement as settlementAddresses, GPv2VaultRelayer as vaultAddresses } from '@cowprotocol/contracts/networks.json'
 
+// Types and utils
+import { AccoutType, OrderParams, ChainId, OnchainOperation } from './types'
 import { Settlement__factory, Erc20__factory } from './abi/types';
-
-const SUPPORTED_CHAIN_IDS = [1, 4, 5, 100]
-type ChainId = 1 | 4 | 5 | 100
-const MAX_U32 = BigNumber.from("0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff")
-const TEN_THOUSAND = BigNumber.from('10000')
-
-const APP_DATA = process.env.APP_DATA || '0x0000000000000000000000000000000000000000000000000000000000000000'
-const DEADLINE_OFFSET = 30 * 60 * 1000 // 30min
-const DEFAULT_SLIPPAGE_BIPS = 100
-
-const NUMBER_CONFIRMATIONS_WAIT = 1
-
-export type AccoutType = 'EOA' | 'SAFE' | 'SAFE_WITH_EOA_PROPOSER'
-
-export interface AccountParams {
-  accountType: AccoutType
-  safeAddress?: string // TODO: not used yet. It will allow to specify the Gnosis Safe address for SAFE_WITH_EOA_PROPOSER setup
-}
-
-export interface LimitOrderParams {
-  sellToken: string
-  buyToken: string
-  sellAmountBeforeFee: string
-  buyAmount?: string
-  partiallyFillable?: boolean
-  appData?: string
-  receiver?: string
-  slippageToleranceBips?: string
-}
-
-export interface OrderParams {
-  chainId?: ChainId
-  account: AccountParams
-  order: LimitOrderParams  
-}
-
-export type TxRequest = Pick<MetaTransactionData, 'to' | 'value' | 'data'> // Required<Pick<TransactionRequest, 'to' | 'value' | 'data'>>
-
-export interface OnchainOperation {
-  description: string
-  txRequest: TxRequest
-}
-
-const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
-const ask = (query: string) => new Promise((resolve) => rl.question(query, resolve));
-const confirm = async (query: string): Promise<boolean> => {
-  const response = await ask(`${query} ${chalk.italic('(y/n)')}: `)
-  if (response === 'y' || response === 'Y') return true
-  else if (response === 'n' || response === 'N') return false
-  else {
-    console.log(`${chalk.red(`Invalid response`)}: Please reply with a ${chalk.bold('Y')} or a ${chalk.bold('N')}`)
-    return await confirm(query)
-  }
-}
-
-function getProvider(chainId: ChainId): ethers.providers.Provider {
-    const infuraKey = process.env.INFURA_KEY
-    const rpcUrl = process.env.RPC_URL
-    if (infuraKey) {
-      return new ethers.providers.InfuraProvider(chainId, infuraKey)
-    } else if (rpcUrl) {
-      return new ethers.providers.InfuraProvider(chainId, infuraKey)
-    } else {
-      throw new Error('Either INFURA_KEY or RPC_URL environment var is required')
-    }
-    
-    assert(rpcUrl, )
-}
-
-function getSigner(accoutType: AccoutType, provider: ethers.providers.Provider): Wallet | undefined {
-  switch (accoutType) {
-    case 'EOA':
-    case 'SAFE_WITH_EOA_PROPOSER':
-      const mnemonic = process.env.MNEMONIC
-      assert(mnemonic, 'MNEMONIC environment var is required for accountTypes EOA or SAFE_WITH_EOA_PROPOSER')
-      const wallet = Wallet.fromMnemonic(mnemonic)
-
-      return wallet.connect(provider)
-    case 'SAFE':
-      return undefined
-    default:
-      break;
-  }
-}
-
-function getChainIdFromEnv(): ChainId {
-  const chainIdEnv = process.env.CHAIN_ID
-  assert(chainIdEnv, 'CHAIN_ID environmentis required')
-  const chainId = parseInt(chainIdEnv)
-  assert(chainIdEnv && SUPPORTED_CHAIN_IDS.includes(chainId) , 'CHAIN_ID must be one supported chainId. Supported: ' + SUPPORTED_CHAIN_IDS.join(', '))
-
-  return chainId as ChainId
-}
-
-
-async function getOrder(orderFilePath: string): Promise<OrderParams> {
-  const content = await fs.readFile(orderFilePath)
-  return JSON.parse(content.toString()) as OrderParams
-}
-
-function getExplorerUrl(chainId: ChainId) {
-  switch (chainId) {
-    case 1:    
-      return 'https://etherscan.io/tx'
-    case 4:    
-      return 'https://rinkeby.etherscan.io/tx'
-    case 5:    
-      return 'https://goerli.etherscan.io/tx'
-    case 100:    
-      return 'https://blockscout.com/xdai/mainnet/tx/'
-    default:
-      throw new Error('Unknonw network: ' + chainId)
-  }
-}
-
-function getCowExplorerUrl(chainId: ChainId) {
-  switch (chainId) {
-    case 1:    
-      return 'https://explorer.cow.fi'
-    case 4:    
-      return 'https://explorer.cow.fi/rinkeby'
-    case 5:    
-      return 'https://explorer.cow.fi/goerli'
-    case 100:    
-    return 'https://explorer.cow.fi/gc'
-    default:
-      throw new Error('Unknonw network: ' + chainId)
-  }  
-}
-
-function getGnosisSafeServiceUrl(chainId: ChainId) {
-  switch (chainId) {
-    case 1:    
-      return 'https://safe-transaction.gnosis.io'
-    case 4:    
-      return 'https://safe-transaction.rinkeby.gnosis.io'
-    case 5:    
-      return 'https://safe-transaction.goerli.gnosis.io'
-    case 100:    
-    return 'https://safe-transaction.xdai.gnosis.io'
-    default:
-      throw new Error('Unknonw network: ' + chainId)
-  }  
-}
-
-function getSafeNetworkShortname(chainId: ChainId) {
-  switch (chainId) {
-    case 1:    
-      return 'eth'
-    case 4:    
-      return 'rin'
-    case 5:    
-      return 'gor'
-    case 100:    
-    return 'gc'
-    default:
-      throw new Error('Unknonw network: ' + chainId)
-  }
-}
+import {getCowExplorerUrl, getChainIdFromEnv, getOrder, getProvider, getSigner, getExplorerUrl, getGnosisSafeServiceUrl} from './utils'
+import { DEFAULT_SLIPPAGE_BIPS, APP_DATA, DEADLINE_OFFSET, TEN_THOUSAND, MAX_U32, NUMBER_CONFIRMATIONS_WAIT } from './constants'
 
 function printExplorer(orderId: string, fromAccount: string, chainId: ChainId) {
   // Show link to explorer
