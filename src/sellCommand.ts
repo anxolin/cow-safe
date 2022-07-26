@@ -227,6 +227,8 @@ async function run() {
     console.log(`    ${chalk.bold('Address')}: ${chalk.blue(fromAccount)}`)
     console.log(`    ${chalk.bold('Theshold:')} ${chalk.blue(threshold)} out of ${chalk.blue(owners.length)}`)
     console.log(`    ${chalk.bold('Owners:')} ${chalk.blue(owners.join(', '))}\n`)
+    console.log(`    ${chalk.bold('Current Nonce:')} ${chalk.blue(nonce)}\n`)
+    
     
 
     const postOrder = await confirm(`${chalk.cyan('Are you sure you want to post this order?')}`)
