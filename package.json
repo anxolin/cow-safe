@@ -16,7 +16,7 @@
     "ethers": "^5.6.9"
   },
   "scripts": {
-    "sell": "ts-node src/index",
+    "sell": "ts-node src/sellCommand",
     "abi": "typechain --target ethers-v5 --out-dir src/abi/types './src/abi/**/*.json'"
   },
   "devDependencies": {

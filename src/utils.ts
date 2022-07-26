@@ -5,6 +5,7 @@ const chalk = require('chalk')
 import { Wallet, ethers } from "ethers"
 
 import { AccoutType, OrderParams, ChainId } from './types'
+import { SUPPORTED_CHAIN_IDS } from './constants'
 
 const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
 export const ask = (query: string) => new Promise((resolve) => rl.question(query, resolve));
@@ -46,6 +47,12 @@ export function getSigner(accoutType: AccoutType, provider: ethers.providers.Pro
     default:
       break;
   }
+}
+
+export function getChainId(chainIdParam: number): ChainId {
+  assert(SUPPORTED_CHAIN_IDS.includes(chainIdParam) , 'chainId must be one supported chainId. Supported: ' + SUPPORTED_CHAIN_IDS.join(', '))
+
+  return chainIdParam as ChainId
 }
 
 export function getChainIdFromEnv(): ChainId {

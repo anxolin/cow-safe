@@ -15,9 +15,9 @@ import { OrderBalance, SigningScheme, QuoteQuery } from '@cowprotocol/contracts'
 import { GPv2Settlement as settlementAddresses, GPv2VaultRelayer as vaultAddresses } from '@cowprotocol/contracts/networks.json'
 
 // Types and utils
-import { AccoutType, OrderParams, ChainId, OnchainOperation } from './types'
+import { ChainId, OnchainOperation } from './types'
 import { Settlement__factory, Erc20__factory } from './abi/types';
-import {getCowExplorerUrl, getChainIdFromEnv, getOrder, getProvider, getSigner, getExplorerUrl, getGnosisSafeServiceUrl} from './utils'
+import {getCowExplorerUrl, getChainIdFromEnv, getOrder, getProvider, getSigner, getExplorerUrl, getGnosisSafeServiceUrl, getSafeNetworkShortname, confirm } from './utils'
 import { DEFAULT_SLIPPAGE_BIPS, APP_DATA, DEADLINE_OFFSET, TEN_THOUSAND, MAX_U32, NUMBER_CONFIRMATIONS_WAIT } from './constants'
 
 function printExplorer(orderId: string, fromAccount: string, chainId: ChainId) {
