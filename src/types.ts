@@ -1,3 +1,5 @@
+import { MetaTransactionData } from "@gnosis.pm/safe-core-sdk-types"
+
 export type ChainId = 1 | 4 | 5 | 100
 
 export type AccoutType = 'EOA' | 'SAFE' | 'SAFE_WITH_EOA_PROPOSER'
