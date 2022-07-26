@@ -60,13 +60,15 @@ async function run() {
   } = order
   
 
-  // Decide what it sthe fromAccount and receiver
+  // Decide who os the fromAccount and receiver
   let fromAccount: string, receiver: string
   if (accountType === 'EOA') {
+    // In EOA is the signing account
     assert(signingAccount, `The signer address is missing`)
     fromAccount = signingAccount
     receiver = receiverParam || signingAccount
   } else {
+    // Otherwise is the safe address
     assert(safeAddress, `The safeAddress is a required parameter for account type: ${account.accountType}`)
     fromAccount = safeAddress
     receiver = receiverParam || safeAddress
@@ -103,7 +105,6 @@ async function run() {
   console.log(`${chalk.cyan('Quote response')}: Receive at least ${chalk.blue(buyAmount)} buy tokens. Fee = ${chalk.blue(feeAmount)}\n${JSON.stringify(quoteResponse, null, 2)} sell tokens.`)
 
   // Reduce the buyAmount by some slippageToleranceBips
-  
   const buyAmountAfterSlippage = BigNumber
     .from(buyAmount)
     .mul(TEN_THOUSAND.sub(BigNumber.from(slippageToleranceBips)))
@@ -128,23 +129,23 @@ async function run() {
 
   console.log(`${chalk.cyan('Raw order')}: \n${JSON.stringify(rawOrder, null, 2)}`)
 
+  // We'll accumulate some transactions, either to bundle them (in a safe setup), or to execute them (in EOA)
+  const txs: OnchainOperation[] = []
   let orderId
-  const dataBundle: OnchainOperation[] = []
-  // Get approval data
-  const vaultAddress = vaultAddresses[chainId].address
-  const sellToken = Erc20__factory.connect(sellTokenAddress, signerOrProvider)
   
   // Validate if enough balance
+  const sellToken = Erc20__factory.connect(sellTokenAddress, signerOrProvider)
   const sellBalance = await sellToken.balanceOf(fromAccount)
   if (sellBalance.lt(sellAmountBeforeFee)) {
     throw new Error(`User doesn't have enough balance of the sell token. Required ${sellAmountBeforeFee}, balance ${sellBalance}`)
   }
   
   // Check allowance (decide if approve sellToken is required)
+  const vaultAddress = vaultAddresses[chainId].address
   const allowance = await sellToken.allowance(fromAccount, vaultAddress)
   if (allowance.lt(sellAmount)) {
     // Get the approve data
-    dataBundle.push({
+    txs.push({
       description: 'Approve sell token',
       txRequest: {
         to: sellTokenAddress,
@@ -154,16 +155,17 @@ async function run() {
     })
   }
 
-
   if (account.accountType === 'EOA') {
     assert(signer)
-    const txTotal = dataBundle.length    
-    if (txTotal > 0) {
-      console.log(`\n\n${chalk.cyan(`${chalk.red(txTotal)} transactions need to be executed`)} before the order can be posted:\n`)
+    
+    // Execute all transactions, one by one
+    const txsTotal = txs.length
+    if (txsTotal > 0) {
+      console.log(`\n\n${chalk.cyan(`${chalk.red(txsTotal)} transactions need to be executed`)} before the order can be posted:\n`)
       let txNumber = 1
-      for (const { txRequest, description } of dataBundle) {
+      for (const { txRequest, description } of txs) {
         const { to, data } = txRequest
-        console.log(`    [${txNumber}/${txTotal}] ${chalk.cyan('Are you sure you want to')} ${chalk.blue(description)}?}`)
+        console.log(`    [${txNumber}/${txsTotal}] ${chalk.cyan('Are you sure you want to')} ${chalk.blue(description)}?}`)
         console.log(`          ${chalk.bold('To')}: ${to}`)
         console.log(`          ${chalk.bold('Tx Data')}: ${data}`)
         txNumber++
@@ -243,7 +245,7 @@ async function run() {
       // Get Pre-sign order data
       const settlementAddress = settlementAddresses[chainId].address
       const settlement = Settlement__factory.connect(settlementAddress, signerOrProvider)
-      dataBundle.push({
+      txs.push({
         description: 'Pre-sign order',
         txRequest: {
           to: settlementAddress,
@@ -253,11 +255,11 @@ async function run() {
       })
 
       // Print all the bundled transactions
-      const txTotal = dataBundle.length    
+      const txTotal = txs.length    
       if (txTotal > 0) {
         console.log(`\n\n${chalk.cyan(`${chalk.red(txTotal)} Bundling Transactions`)}: Using Gnosis Safe\n`)
         let txNumber = 1
-        for (const { txRequest, description } of dataBundle) {
+        for (const { txRequest, description } of txs) {
           const { to, data } = txRequest
           console.log(`    [${txNumber}/${txTotal}] ${chalk.blue(description)}`)
           console.log(`          ${chalk.bold('To')}: ${to}`)
@@ -267,7 +269,7 @@ async function run() {
       }
 
       // Create bundle transaction
-      const safeTx = await safe.createTransaction(dataBundle.map(tx => tx.txRequest))
+      const safeTx = await safe.createTransaction(txs.map(tx => tx.txRequest))
       await safe.signTransaction(safeTx)
       
       const safeTxHash = await safe.getTransactionHash(safeTx)
@@ -307,8 +309,6 @@ async function run() {
   }
   
   printExplorer(orderId, fromAccount, chainId)
-  
-
   exit(0)
 }
 
