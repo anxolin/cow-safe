@@ -111,131 +111,6 @@ function getOrderFilePath(): string {
 }
 
 
-async function run() {  
-  // Get order definition from file
-  const orderFilePath = getOrderFilePath()
-  const orderDefinition = await getOrder(orderFilePath)
-
-  // Instantiate SDK
-  const { cowSdk, provider, signingAccount, signer, chainId } = getSdkInstance(orderDefinition)
-  const { account } = orderDefinition
-  const signerOrProvider = signer || provider
-
-  // Get quote query: info required to get a price §
-  const { fromAccount, receiver } = getTradingAccounts({ orderDefinition, signingAccount })
-  const quoteOrder = getQuoteOrder({ orderDefinition, fromAccount, receiver })
-
-  // Get quote
-  console.log(`${chalk.cyan('Get quote for order')}:\n${JSON.stringify(quoteOrder, null, 2)}`)
-  const quoteResponse = await cowSdk.cowApi.getQuote(quoteOrder) 
-  const { sellAmount: sellAmountQuote, buyAmount: buyAmountQuote, feeAmount } = quoteResponse.quote
-  console.log(`${chalk.cyan('Quote response')}: Receive at least ${chalk.blue(buyAmountQuote)} buy tokens. Fee = ${chalk.blue(feeAmount)}\n${JSON.stringify(quoteResponse, null, 2)} sell tokens.`)
-
-  // Set your own price
-  const { sellAmount, buyAmount } = getCustomPrice({ sellAmountQuote, buyAmountQuote, orderDefinition })
-
-  // Prepare the RAW order
-  const rawOrder: RawOrder = {
-    ...quoteOrder,
-    receiver,
-
-    // Limit Price
-    sellAmount,
-    buyAmount,
-    sellAmountBeforeFee: undefined,
-
-    // Fee
-    feeAmount,    
-    priceQuality: "optimal"
-  }
-  delete rawOrder.sellAmountBeforeFee
-  console.log(`${chalk.cyan('Raw order')}: \n${JSON.stringify(rawOrder, null, 2)}`)
-
-  // We'll accumulate some transactions, either to bundle them (in a safe setup), or to execute them (in EOA)
-  const txs: OnchainOperation[] = []
-  let orderId
-
-  // Add approval operation
-  const approveOperation = await getAppoveOperation({ fromAccount, sellAmount, chainId, orderDefinition, signerOrProvider })
-  if (approveOperation) {
-    txs.push(approveOperation)
-  }
-
-  const { accountType } = account
-  const isEip1271 = accountType === 'SAFE_WITH_EOA_EIP1271'
-  const isPreSign = accountType === 'SAFE_WITH_EOA_PRESIGN'
-
-  if (accountType === 'EOA') {    
-    assert(signer && signingAccount)
-
-    // Execute pre-interations before creating the order
-    await executePreInteractions({ txs, signingAccount, signer, chainId })
-    
-    // Sign and Post order
-    orderId = await postOrderEip712({ signingAccount, rawOrder, cowSdk })    
-  } else if (isPreSign || isEip1271) {
-    assert(signer && signingAccount)
-
-    // Get safe SDK & Api
-    const { safe, safeApi } = await getSafe({ fromAccount, chainId, signer })    
-    
-    // Print safe info
-    const safeInfo = await safeApi.getSafeInfo(fromAccount)    
-    printSafeInfo(safeInfo)
-
-    let usePresign
-    if (isEip1271) {
-      if (txs.length > 0) {
-        console.log(`${chalk.cyan(`You cannot trade gassless yet!`)}: You try to trade using EIP-1271, but you need to do some pre-interaction which requires an ethereum transaction (approve sell token or wrap ether). Therefore we will create this order as a bundle transaction which uses pre-sign`)
-        usePresign = true
-      } else {
-        usePresign = false
-      }
-    } else if (isPreSign) {
-      usePresign = true
-    } else {
-      throw new Error('Unsupported account type' + accountType)
-    }
-
-    if (usePresign) {
-      // Post pre-sign order
-      orderId = await postOrderPresign({ signingAccount, rawOrder, txs, cowSdk, safeInfo, safe, chainId, safeApi, signerOrProvider })    
-    } else {
-      // Use EIP-1271
-      throw new Error('Not implemented EIP-1271')
-    }
-  } else {
-    throw new Error('Not implemented')
-  }
-  
-  printExplorer(orderId, fromAccount, chainId)
-  exit(0)
-}
-
-run().catch(error => {
-  console.error(error)
-  console.log(`\n${chalk.cyan('There was some errors')}. Exiting now! 👋`)
-  exit(200)
-})
-
-function getCustomPrice(params: { sellAmountQuote: string; buyAmountQuote: string; orderDefinition: OrderParams }) {
-  const { sellAmountQuote, buyAmountQuote, orderDefinition } = params
-  const {
-    slippageToleranceBips: slippageToleranceBips = DEFAULT_SLIPPAGE_BIPS,
-  } = orderDefinition.order
-
-  // Reduce the buyAmount by some slippageToleranceBips
-  const buyAmountAfterSlippage = BigNumber
-    .from(buyAmountQuote)
-    .mul(TEN_THOUSAND.sub(BigNumber.from(slippageToleranceBips)))
-    .div(TEN_THOUSAND)
-  console.log(`${chalk.cyan(`Apply ${chalk.blue(slippageToleranceBips + ' BIPs')} to expected receive tokens`)}. Accepting ${chalk.blue(buyAmountAfterSlippage)}, expected ${chalk.blue(buyAmount)}`)
-
-  return {
-    sellAmount: sellAmountQuote, // sellAmount already has the fees deducted
-    buyAmount: buyAmountAfterSlippage.toString()
-  }
-}
 
 async function getAppoveOperation(params: { fromAccount: string, sellAmount: string, chainId: ChainId, orderDefinition: OrderParams, signerOrProvider: ethers.Wallet | ethers.providers.Provider }): Promise<OnchainOperation| undefined> {
   const { fromAccount, sellAmount, chainId, orderDefinition, signerOrProvider } = params
@@ -435,7 +310,7 @@ async function postSafeProposal(params: { signingAccount: string, safeInfo: Safe
 
   // Prepare proposal
   const senderSignature = safeTx.encodedSignatures()
-  const safeTxProposal: SafeTransactionProposal = {
+  const safeTxProposal = {
     safeAddress: fromAccount,
     safeTransactionData: safeTx.data,
     safeTxHash: safeTxHash,
@@ -475,3 +350,129 @@ async function executeSafeTransaction(params: { safeTx: SafeTransaction, safeInf
   console.log(`${chalk.cyan('🎉 Safe transaction has been sent')}: Review in block explorer: ${chalk.blue(getExplorerUrl(chainId) + '/' + safeTxResult.hash)}`)
 }
 
+
+async function run() {  
+  // Get order definition from file
+  const orderFilePath = getOrderFilePath()
+  const orderDefinition = await getOrder(orderFilePath)
+
+  // Instantiate SDK
+  const { cowSdk, provider, signingAccount, signer, chainId } = getSdkInstance(orderDefinition)
+  const { account } = orderDefinition
+  const signerOrProvider = signer || provider
+
+  // Get quote query: info required to get a price §
+  const { fromAccount, receiver } = getTradingAccounts({ orderDefinition, signingAccount })
+  const quoteOrder = getQuoteOrder({ orderDefinition, fromAccount, receiver })
+
+  // Get quote
+  console.log(`${chalk.cyan('Get quote for order')}:\n${JSON.stringify(quoteOrder, null, 2)}`)
+  const quoteResponse = await cowSdk.cowApi.getQuote(quoteOrder) 
+  const { sellAmount: sellAmountQuote, buyAmount: buyAmountQuote, feeAmount } = quoteResponse.quote
+  console.log(`${chalk.cyan('Quote response')}: Receive at least ${chalk.blue(buyAmountQuote)} buy tokens. Fee = ${chalk.blue(feeAmount)}\n${JSON.stringify(quoteResponse, null, 2)} sell tokens.`)
+
+  // Set your own price
+  const { sellAmount, buyAmount } = getCustomPrice({ sellAmountQuote, buyAmountQuote, orderDefinition })
+
+  // Prepare the RAW order
+  const rawOrder: RawOrder = {
+    ...quoteOrder,
+    receiver,
+
+    // Limit Price
+    sellAmount,
+    buyAmount,
+    sellAmountBeforeFee: undefined,
+
+    // Fee
+    feeAmount,    
+    priceQuality: "optimal"
+  }
+  delete rawOrder.sellAmountBeforeFee
+  console.log(`${chalk.cyan('Raw order')}: \n${JSON.stringify(rawOrder, null, 2)}`)
+
+  // We'll accumulate some transactions, either to bundle them (in a safe setup), or to execute them (in EOA)
+  const txs: OnchainOperation[] = []
+  let orderId
+
+  // Add approval operation
+  const approveOperation = await getAppoveOperation({ fromAccount, sellAmount, chainId, orderDefinition, signerOrProvider })
+  if (approveOperation) {
+    txs.push(approveOperation)
+  }
+
+  const { accountType } = account
+  const isEip1271 = accountType === 'SAFE_WITH_EOA_EIP1271'
+  const isPreSign = accountType === 'SAFE_WITH_EOA_PRESIGN'
+
+  if (accountType === 'EOA') {    
+    assert(signer && signingAccount)
+
+    // Execute pre-interations before creating the order
+    await executePreInteractions({ txs, signingAccount, signer, chainId })
+    
+    // Sign and Post order
+    orderId = await postOrderEip712({ signingAccount, rawOrder, cowSdk })    
+  } else if (isPreSign || isEip1271) {
+    assert(signer && signingAccount)
+
+    // Get safe SDK & Api
+    const { safe, safeApi } = await getSafe({ fromAccount, chainId, signer })    
+    
+    // Print safe info
+    const safeInfo = await safeApi.getSafeInfo(fromAccount)    
+    printSafeInfo(safeInfo)
+
+    let usePresign
+    if (isEip1271) {
+      if (txs.length > 0) {
+        console.log(`${chalk.cyan(`You cannot trade gassless yet!`)}: You try to trade using EIP-1271, but you need to do some pre-interaction which requires an ethereum transaction (approve sell token or wrap ether). Therefore we will create this order as a bundle transaction which uses pre-sign`)
+        usePresign = true
+      } else {
+        usePresign = false
+      }
+    } else if (isPreSign) {
+      usePresign = true
+    } else {
+      throw new Error('Unsupported account type' + accountType)
+    }
+
+    if (usePresign) {
+      // Post pre-sign order
+      orderId = await postOrderPresign({ signingAccount, rawOrder, txs, cowSdk, safeInfo, safe, chainId, safeApi, signerOrProvider })    
+    } else {
+      // Use EIP-1271
+      throw new Error('Not implemented EIP-1271')
+    }
+  } else {
+    throw new Error('Not implemented')
+  }
+  
+  printExplorer(orderId, fromAccount, chainId)
+  exit(0)
+}
+
+run().catch(error => {
+  console.error(error)
+  console.log(`\n${chalk.cyan('There was some errors')}. Exiting now! 👋`)
+  exit(200)
+})
+
+function getCustomPrice(params: { sellAmountQuote: string; buyAmountQuote: string; orderDefinition: OrderParams }) {
+  const { sellAmountQuote, buyAmountQuote, orderDefinition } = params
+  const {
+    slippageToleranceBips: slippageToleranceBips = DEFAULT_SLIPPAGE_BIPS,
+  } = orderDefinition.order
+
+  // Reduce the buyAmount by some slippageToleranceBips
+  const buyAmountAfterSlippage = BigNumber
+    .from(buyAmountQuote)
+    .mul(TEN_THOUSAND.sub(BigNumber.from(slippageToleranceBips)))
+    .div(TEN_THOUSAND)
+  console.log(`${chalk.cyan(`Apply ${chalk.blue(slippageToleranceBips + ' BIPs')} to expected receive tokens`)}. Accepting ${chalk.blue(buyAmountAfterSlippage)}, expected ${chalk.blue(buyAmount)}`)
+
+  return {
+    sellAmount: sellAmountQuote, // sellAmount already has the fees deducted
+    buyAmount: buyAmountAfterSlippage.toString()
+  }
+}
