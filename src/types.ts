@@ -1,8 +1,10 @@
+import { UnsignedOrder } from "@cowprotocol/cow-sdk/dist/utils/sign"
 import { MetaTransactionData } from "@gnosis.pm/safe-core-sdk-types"
 
 export type ChainId = 1 | 4 | 5 | 100
 
-export type AccoutType = 'EOA' | 'SAFE' | 'SAFE_WITH_EOA_PROPOSER'
+export type AccoutType = 'EOA' | 'SAFE_WITH_EOA_PRESIGN' | 'SAFE_WITH_EOA_EIP1271'
+
 export interface AccountParams {
   accountType: AccoutType
   safeAddress?: string
@@ -31,3 +33,9 @@ export interface OnchainOperation {
   description: string
   txRequest: TxRequest
 }
+
+export type RawOrder = UnsignedOrder & {
+  from: string,
+  priceQuality: 'optimal', // TODO: Review types in SDK, the API was returning an error if not if not priceQuality
+  sellAmountBeforeFee: any
+} 

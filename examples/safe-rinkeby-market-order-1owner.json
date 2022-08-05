@@ -1,7 +1,7 @@
 {
   "chainId": 4,
   "account": {
-    "accountType": "SAFE_WITH_EOA_PROPOSER",
+    "accountType": "SAFE_WITH_EOA_PRESIGN",
     "safeAddress": "0x004D147e5F5Fa169e204CaAAfa51565d5bB841Ec"
   },
   "order": {

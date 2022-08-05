@@ -36,16 +36,15 @@ export function getProvider(chainId: ChainId): ethers.providers.Provider {
 export function getSigner(accoutType: AccoutType, provider: ethers.providers.Provider): Wallet | undefined {
   switch (accoutType) {
     case 'EOA':
-    case 'SAFE_WITH_EOA_PROPOSER':
+    case 'SAFE_WITH_EOA_PRESIGN':
+    case 'SAFE_WITH_EOA_EIP1271':
       const mnemonic = process.env.MNEMONIC
-      assert(mnemonic, 'MNEMONIC environment var is required for accountTypes EOA or SAFE_WITH_EOA_PROPOSER')
+      assert(mnemonic, 'MNEMONIC environment var is required for accountTypes EOA, SAFE_WITH_EOA_PRESIGN or SAFE_WITH_EOA_EIP1271')
       const wallet = Wallet.fromMnemonic(mnemonic)
 
       return wallet.connect(provider)
-    case 'SAFE':
-      return undefined
     default:
-      break;
+      return undefined
   }
 }
 
