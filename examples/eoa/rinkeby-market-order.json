@@ -5,8 +5,8 @@
   },
   "order": {
     "sellToken": "0xc778417E063141139Fce010982780140Aa0cD5Ab",
-    "buyToken": "0x4DBCdF9B62e891a7cec5A2568C3F4FAF9E8Abe2b",
-    "sellAmountBeforeFee": "100000000000000000",
+    "buyToken": "0x5592EC0cfb4dbc12D3aB100b257153436a1f0FEa",
+    "sellAmountBeforeFee": "10000000000000000",
     "partiallyFillable": false
   }
 }

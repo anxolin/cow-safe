@@ -35,7 +35,7 @@ function getSdkInstance(orderDefinition: OrderParams) {
   const signer = getSigner(account.accountType, provider)
   const signingAccount = signer?.address
   
-  const cowSdk = new CowSdk(chainId, { signer })
+  const cowSdk = new CowSdk(chainId, { signer, appDataHash: APP_DATA })
   console.log(`${chalk.red('CoW SDK')} ${chalk.cyan('initialized')}. Signing Account: ${chalk.blue(signingAccount ? signingAccount : 'Undefined')}, Network: ${chalk.blue(chainId)}`)
 
   return { cowSdk, provider, signingAccount, signer, chainId }
@@ -176,7 +176,7 @@ async function executePreInteractions(params: { txs: OnchainOperation[], signing
 }
 
 
-async function postOrderEip712(params: { signingAccount: string, rawOrder: RawOrder, cowSdk: CowSdk<ChainId> }) {
+async function signAndPostOrderEip712(params: { signingAccount: string, rawOrder: RawOrder, cowSdk: CowSdk<ChainId> }) {
   const {signingAccount, rawOrder, cowSdk } = params
   const postOrder = await confirm(`${chalk.cyan('Are you sure you want to post this order?')}`)
   if (!postOrder) {
@@ -185,6 +185,7 @@ async function postOrderEip712(params: { signingAccount: string, rawOrder: RawOr
   }    
 
   // Sign the order
+  
   const { signature, signingScheme } = await cowSdk.signOrder(rawOrder)
   assert(signature, 'signOrder must return the signature')
 
@@ -412,7 +413,7 @@ async function run() {
     await executePreInteractions({ txs, signingAccount, signer, chainId })
     
     // Sign and Post order
-    orderId = await postOrderEip712({ signingAccount, rawOrder, cowSdk })    
+    orderId = await signAndPostOrderEip712({ signingAccount, rawOrder, cowSdk })    
   } else if (isPreSign || isEip1271) {
     assert(signer && signingAccount)
 
@@ -469,7 +470,7 @@ function getCustomPrice(params: { sellAmountQuote: string; buyAmountQuote: strin
     .from(buyAmountQuote)
     .mul(TEN_THOUSAND.sub(BigNumber.from(slippageToleranceBips)))
     .div(TEN_THOUSAND)
-  console.log(`${chalk.cyan(`Apply ${chalk.blue(slippageToleranceBips + ' BIPs')} to expected receive tokens`)}. Accepting ${chalk.blue(buyAmountAfterSlippage)}, expected ${chalk.blue(buyAmount)}`)
+  console.log(`${chalk.cyan(`Apply ${chalk.blue(slippageToleranceBips + ' BIPs')} to expected receive tokens`)}. Accepting ${chalk.blue(buyAmountAfterSlippage)}, expected ${chalk.blue(buyAmountQuote)}`)
 
   return {
     sellAmount: sellAmountQuote, // sellAmount already has the fees deducted
